@@ -14,7 +14,7 @@ using namespace std;
 
 const int CLIENT_QUEUED_LIMIT = 5;
 const int UPLOADER_COUNT = 1;
-const int DOWNLOADER_COUNT = 2;
+const int DOWNLOADER_COUNT = 1;
 const string TRACKER_IP = "127.0.0.1";
 const string TRACKER_PORT = "4500";
 
@@ -25,6 +25,8 @@ vector<string> split(string, char);
 void createTorrentFile(string);
 
 string connectWithTracker(string, string);
+
+string getListFromTracker();
 
 void* uploadThread(void*);
 
@@ -122,6 +124,11 @@ int main(int argc, char* argv[])
 				printf("%s\n", trackerResponse.c_str());
 			}
         }
+       else if(action == "list")
+        {
+            string trackerResponse = getListFromTracker();
+			printf("%s\n", trackerResponse.c_str());
+        }
     }
 
     return 0;
@@ -198,6 +205,62 @@ string connectWithTracker(string torrentfile, string msg)
 
     trackerRequest += "8:filesize";
     trackerRequest += "i" + to_string(torrentParser.filesize) + "e";
+
+    int requestLen = trackerRequest.size();
+    if(sendAll(sockFD, trackerRequest.c_str(), requestLen) == -1)
+    {
+        perror("sendall() failed");
+        printf("Only sent %d bytes\n", requestLen);
+    }
+
+    char trackerResponse[BUFF_SIZE];
+    memset(trackerResponse, 0, BUFF_SIZE);
+
+    int responseLen = recv(sockFD, trackerResponse, BUFF_SIZE, 0);
+    
+    // Receive failed for some reason
+    if(responseLen < 0)
+    {
+        perror("recv() failed");
+        closeSocket(sockFD);
+        return "";
+    }
+
+    // Connection closed by client
+    if(responseLen == 0)
+    {
+        printf("Tracker closed connection without responding\n");
+        closeSocket(sockFD);
+        return "";
+    }
+
+    closeSocket(sockFD);
+    return trackerResponse;
+}
+
+string getListFromTracker()
+{
+    // Server address
+    sockaddr_in serverAddr;
+    unsigned serverAddrLen = sizeof(serverAddr);
+    memset(&serverAddr, 0, serverAddrLen);
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = inet_addr(TRACKER_IP.c_str());
+    serverAddr.sin_port = htons(stoi(TRACKER_PORT));
+
+    // Create a socket and connect to tracker
+    int sockFD = createTCPSocket();
+    int connectRetVal = connect(sockFD, (sockaddr*) &serverAddr, serverAddrLen);
+    if(connectRetVal < 0)
+    {
+        perror("connect() to tracker");
+        closeSocket(sockFD);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Connected to tracker\n");
+
+    string trackerRequest = "list$";
 
     int requestLen = trackerRequest.size();
     if(sendAll(sockFD, trackerRequest.c_str(), requestLen) == -1)

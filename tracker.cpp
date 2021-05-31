@@ -35,8 +35,11 @@ string addToList(string, string, int);
 // Remove the client details from mapping
 string removeFromList(string, string, int);
 
+// Get list of available files 
+string getListOfFiles();
+
 // Get list of clients having this file
-ClientList getClients(string);
+ClientList getListOfClients(string);
 
 int main(int argc, char* argv[])
 {
@@ -123,10 +126,14 @@ void* serverWorker(void* arg)
 
         vector<string> request = split(trackerRequest,'$');
 
-        // Debug
-        printf("%s\n", request[1]);
         BencodeParser bencodeParser(request[1]);
-        bencodeParser.print_details();
+
+        if(request[0] != "list")
+        {
+	        // Debug
+	        printf("%s\n", request[1]);
+	        bencodeParser.print_details();
+	    }
 
         string trackerResponse = "";
 
@@ -136,7 +143,7 @@ void* serverWorker(void* arg)
         }
         else if(request[0] == "get")
         {
-            ClientList clientList = getClients(bencodeParser.filename);
+            ClientList clientList = getListOfClients(bencodeParser.filename);
             for(auto client : clientList)
             {
                 trackerResponse += "6:peerip";
@@ -149,6 +156,10 @@ void* serverWorker(void* arg)
         else if(request[0] == "remove")
         {
             trackerResponse = removeFromList(bencodeParser.filename, inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
+        }
+        else if(request[0] == "list")
+        {
+        	trackerResponse = getListOfFiles();
         }
 
         if(trackerResponse == "")
@@ -240,7 +251,20 @@ string removeFromList(string filename, string ip, int port)
     return response;
 }
 
-ClientList getClients(string filename)
+string getListOfFiles()
+{
+	// Get list of files
+    pthread_mutex_lock(&mappingMutex);
+    string response = "List of available files:\n";
+    for(auto map_iter = mapping.begin(); map_iter != mapping.end() ; ++map_iter)
+    {
+        response += map_iter->first + "\n";
+    }
+    pthread_mutex_unlock(&mappingMutex);
+    return response;
+}
+
+ClientList getListOfClients(string filename)
 {
     pthread_mutex_lock(&mappingMutex);
     ClientList retVal(mapping[filename]);
