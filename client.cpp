@@ -62,13 +62,12 @@ int main(int argc, char* argv[])
     // Create upload threads
     pthread_t uploadThreadID[UPLOADER_COUNT];
     
-
     // Create download threads
     pthread_t downloadThreadID[DOWNLOADER_COUNT];
 
-
     string action, args;
-     while(true)
+    
+    while(true)
     {
         getline(cin,args);
         vector<string> argument = split(args,' ');
@@ -130,10 +129,14 @@ int main(int argc, char* argv[])
 				printf("%s\n", trackerResponse.c_str());
 			}
         }
-       else if(action == "list")
+        else if(action == "list")
         {
             string trackerResponse = getListFromTracker();
 			printf("%s\n", trackerResponse.c_str());
+        }
+        else
+        {
+        	printf("Unnkown command!\n");
         }
     }
 

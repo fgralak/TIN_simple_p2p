@@ -243,7 +243,11 @@ string removeFromList(string filename, string ip, int port)
                     break;
                 }
             }
-            break;
+        }
+        if(map_iter->second.size() == 0)
+        {
+        	mapping.erase(map_iter);
+        	break;
         }
     }
     pthread_mutex_unlock(&mappingMutex);
