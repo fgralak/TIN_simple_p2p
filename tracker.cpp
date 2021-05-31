@@ -1,12 +1,12 @@
-#include <iostream>         // Basic IO
-#include <stdlib.h>         // exit()
-#include <sys/types.h>      // socket()
-#include <sys/socket.h>     // socket()
-#include "helper_functions.h"
+#include <iostream>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <pthread.h>
 #include <atomic>
 #include <map>
 #include <vector>
+#include "helper_functions.h"
 #include "bencode_parser.h"
 
 using namespace std;
@@ -130,7 +130,6 @@ void* serverWorker(void* arg)
 
         if(request[0] != "list")
         {
-	        // Debug
 	        printf("%s\n", request[1]);
 	        bencodeParser.print_details();
 	    }
@@ -182,18 +181,18 @@ void* serverWorker(void* arg)
 
 vector<string> split(string txt, char ch)
 {
-    size_t pos = txt.find( ch );
+    size_t pos = txt.find(ch);
     size_t initialPos = 0;
-    vector<string>strs;
-    while( pos != string::npos ) {
-        strs.push_back( txt.substr( initialPos, pos - initialPos ) );
+    vector<string> strs;
+    
+    while(pos != string::npos) 
+    {
+        strs.push_back(txt.substr(initialPos, pos - initialPos));
         initialPos = pos + 1;
-
-        pos = txt.find( ch, initialPos );
+        pos = txt.find(ch, initialPos);
     }
 
-    strs.push_back( txt.substr( initialPos, min( pos, txt.size() ) - initialPos + 1 ) );
-
+    strs.push_back( txt.substr(initialPos, min(pos, txt.size()) - initialPos + 1));
     return strs;
 }
 

@@ -20,16 +20,22 @@ const string TRACKER_PORT = "4500";
 
 int listenPort;
 
+// Split string into parts
 vector<string> split(string, char);
 
+// Create .torrent from file
 void createTorrentFile(string);
 
+// Connect client to tracker
 string connectWithTracker(string, string);
 
+// Get list of available files from tracker
 string getListFromTracker();
 
+// Basic upload thread
 void* uploadThread(void*);
 
+// Basic download thread
 void* downloadThread(void*);
 
 int main(int argc, char* argv[])
@@ -136,18 +142,18 @@ int main(int argc, char* argv[])
 
 vector<string> split(string txt, char ch)
 {
-    size_t pos = txt.find( ch );
+    size_t pos = txt.find(ch);
     size_t initialPos = 0;
-    vector<string>strs;
-    while( pos != string::npos ) {
-        strs.push_back( txt.substr( initialPos, pos - initialPos ) );
+    vector<string> strs;
+    
+    while(pos != string::npos)
+    {
+        strs.push_back(txt.substr(initialPos, pos - initialPos));
         initialPos = pos + 1;
-
-        pos = txt.find( ch, initialPos );
+        pos = txt.find(ch, initialPos);
     }
 
-    strs.push_back( txt.substr( initialPos, min( pos, txt.size() ) - initialPos + 1 ) );
-
+    strs.push_back(txt.substr(initialPos, min(pos, txt.size()) - initialPos + 1));
     return strs;
 }
 

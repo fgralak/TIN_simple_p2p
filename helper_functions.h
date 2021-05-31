@@ -12,7 +12,6 @@
 int createTCPSocket();
 void bindToPort(int, short);
 void closeSocket(int);
-const int BUFF_SIZE = (1 << 15);
 
 // Creates TCP Socket
 int createTCPSocket()
