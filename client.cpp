@@ -6,11 +6,21 @@
 #include <sys/socket.h>
 #include <sstream>
 #include <vector>
+#include <array>
 #include "helper_functions.h"
 #include "torrent_parser.h"
 #include "bencode_parser.h"
 
 using namespace std;
+
+
+struct params_t {
+        pthread_mutex_t mutex;
+        bool done;
+        int id;
+        string peer;
+};
+
 
 const int CLIENT_QUEUED_LIMIT = 5;
 const int UPLOADER_COUNT = 1;
@@ -65,6 +75,19 @@ int main(int argc, char* argv[])
     // Create download threads
     pthread_t downloadThreadID[DOWNLOADER_COUNT];
 
+
+    array<params_t, UPLOADER_COUNT> uploadingParams;
+    array<params_t, DOWNLOADER_COUNT> downloadingParams;
+    unsigned currDownloaderCount = 0;
+    unsigned currUploaderCount = 0;
+    for (auto &uploader : uploadingParams)
+    {
+        pthread_mutex_init(&uploader.mutex, NULL);
+    }
+    for (auto &downloader : uploadingParams)
+    {
+        pthread_mutex_init(&downloader.mutex, NULL);
+    }
     string action, args;
     
     while(true)
@@ -94,7 +117,7 @@ int main(int argc, char* argv[])
                 string trackerResponse = connectWithTracker(argument[1], "share");
 				printf("%s\n", trackerResponse.c_str());
 				pthread_create(&uploadThreadID[0], NULL, uploadThread, (void*)&listenSocket);
-    			pthread_join(uploadThreadID[0], NULL);
+//    			pthread_join(uploadThreadID[0], NULL);
             }
         }
         else if(action == "get")
@@ -103,18 +126,23 @@ int main(int argc, char* argv[])
             {
                 printf("Invalid argument : <filename.torrent>\n");
             }
-            else
             {
+
+                //TODO gdy nie zostanie utworzony watek do pobierania trzeba podzielic rzeczy do pobrania po rowno
                 string trackerResponse = connectWithTracker(argument[1], "get");
-				printf("%s\n", trackerResponse.c_str());
-				vector<string>peers = split(trackerResponse, '$');
-				int numberOfPeers = peers.size() - 1;
+                printf("%s\n", trackerResponse.c_str());
+                vector<string> peers = split(trackerResponse, '$');
+                int numberOfPeers = peers.size() - 1;
 
-    			for(int i = 0; i < DOWNLOADER_COUNT && i < numberOfPeers; i++)
-        			pthread_create(&downloadThreadID[i], NULL, downloadThread, (void*)&peers[i]);
-
-			    for(int i = 0; i < DOWNLOADER_COUNT; i++)
-			        pthread_join(downloadThreadID[i], NULL);
+                for (int i = currDownloaderCount;
+                        i < DOWNLOADER_COUNT && i < numberOfPeers
+                        && currDownloaderCount < DOWNLOADER_COUNT; i++)
+                {
+                    downloadingParams[i].peer = peers[i];
+                    pthread_create(&downloadThreadID[i], NULL, downloadThread,
+                                   (void*) &downloadingParams[i]);
+                    currDownloaderCount++;
+                }
             }
         }
         else if(action == "remove")
@@ -138,8 +166,23 @@ int main(int argc, char* argv[])
         {
         	printf("Unnkown command!\n");
         }
+
+        for (int i = 0; i < DOWNLOADER_COUNT; i++)
+        {
+            if (downloadingParams[i].done == true)
+            {
+                downloadingParams[i].done = false;
+                pthread_join(downloadThreadID[i], NULL);
+                currDownloaderCount--;
+            }
+        }
+
     }
 
+    for (auto &downloader : downloadingParams)
+    {
+        pthread_mutex_destroy(&downloader.mutex);
+    }
     return 0;
 }
 
@@ -355,8 +398,11 @@ void* uploadThread(void* arg) {
 void* downloadThread(void* arg)
 {
     printf("Downloader Thread %lu created\n", pthread_self());
-    std::string trackerResponse = *(static_cast <std::string*> (arg));
+    params_t* nArg = &(*(params_t*)(arg));
+    std::string trackerResponse = (static_cast <std::string> (nArg->peer));
     printf("%s\n", trackerResponse.c_str());
+
+    pthread_mutex_lock(&(*nArg).mutex);
 
     // Parse the tracker response
     BencodeParser bencodeParser(trackerResponse);
@@ -413,5 +459,8 @@ void* downloadThread(void* arg)
 
     printf("Downloaded data: %s\n", peerResponse);
     closeSocket(sockFD);
+
+    pthread_mutex_unlock(&(*(params_t*)(arg)).mutex);
+    (*(params_t*)(arg)).done = true;
     return NULL;
 }

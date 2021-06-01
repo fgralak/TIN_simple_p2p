@@ -1,8 +1,16 @@
+CPPFLAGS = -std=c++17 -Wextra  -pthread
+
+all: T C
+
+
+debug: CPPFLAGS += -g
+debug: T C
+
 T : tracker.cpp
-	g++ -std=c++11 -pthread tracker.cpp -o tracker
+	g++ $(CPPFLAGS) tracker.cpp -o tracker
 
 C :	client.cpp
-	g++ -std=c++11 -pthread client.cpp -o client
+	g++ $(CPPFLAGS) client.cpp -o client
 
 clean:
 	rm -f client
