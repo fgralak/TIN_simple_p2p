@@ -48,6 +48,9 @@ void* uploadThread(void*);
 // Basic download thread
 void* downloadThread(void*);
 
+// IO task
+void* ioTask(void*);
+
 int main(int argc, char* argv[])
 {
     // Check if arguments are valid
@@ -75,6 +78,9 @@ int main(int argc, char* argv[])
     // Create download threads
     pthread_t downloadThreadID[DOWNLOADER_COUNT];
 
+    // Create IO thread
+    pthread_t ioThread;
+    params_t ioThreadParams;
 
     array<params_t, UPLOADER_COUNT> uploadingParams;
     array<params_t, DOWNLOADER_COUNT> downloadingParams;
@@ -90,83 +96,101 @@ int main(int argc, char* argv[])
     }
     string action, args;
     
+
+    pthread_create(&ioThread, NULL, ioTask,
+                   (void*) &ioThreadParams);
+
     while(true)
     {
-        getline(cin,args);
-        vector<string> argument = split(args,' ');
-        action = argument[0];    
-        if(action == "generate")
+        //check IO
+        if (ioThreadParams.done)
         {
-            if(argument.size() < 2)
-            {
-                printf( "Invalid argument : <filename> \n");
-            }
-            else
-            {
-                createTorrentFile(argument[1]);
-            }
-        }
-        else if(action == "share")
-        {
-            if(argument.size() < 2)
-            {
-                printf("Invalid argument : <filename.torrent>\n");
-            }
-            else
-            {
-                string trackerResponse = connectWithTracker(argument[1], "share");
-				printf("%s\n", trackerResponse.c_str());
-				pthread_create(&uploadThreadID[0], NULL, uploadThread, (void*)&listenSocket);
-//    			pthread_join(uploadThreadID[0], NULL);
-            }
-        }
-        else if(action == "get")
-    {
-            if(argument.size() < 2)
-            {
-                printf("Invalid argument : <filename.torrent>\n");
-            }
-            {
+            pthread_join(ioThread, NULL);
+            args = ioThreadParams.peer;
+            ioThreadParams.done = false;
+            pthread_create(&ioThread, NULL, ioTask,
+                           (void*) &ioThreadParams);
 
-                //TODO gdy nie zostanie utworzony watek do pobierania trzeba podzielic rzeczy do pobrania po rowno
-                string trackerResponse = connectWithTracker(argument[1], "get");
-                printf("%s\n", trackerResponse.c_str());
-                vector<string> peers = split(trackerResponse, '$');
-                int numberOfPeers = peers.size() - 1;
+            vector<string> argument = split(args, ' ');
+            action = argument[0];
 
-                for (int i = currDownloaderCount;
-                        i < DOWNLOADER_COUNT && i < numberOfPeers
-                        && currDownloaderCount < DOWNLOADER_COUNT; i++)
+            if (action == "generate")
+            {
+                if (argument.size() < 2)
                 {
-                    downloadingParams[i].peer = peers[i];
-                    pthread_create(&downloadThreadID[i], NULL, downloadThread,
-                                   (void*) &downloadingParams[i]);
-                    currDownloaderCount++;
+                    printf("Invalid argument : <filename> \n");
+                }
+                else
+                {
+                    createTorrentFile(argument[1]);
                 }
             }
-        }
-        else if(action == "remove")
-        {
-             if(argument.size() < 2)
+            else if (action == "share")
             {
-                printf("Invalid argument : <filename.torrent>\n");
+                if (argument.size() < 2)
+                {
+                    printf("Invalid argument : <filename.torrent>\n");
+                }
+                else
+                {
+                    string trackerResponse = connectWithTracker(argument[1],
+                                                                "share");
+                    printf("%s\n", trackerResponse.c_str());
+                    pthread_create(&uploadThreadID[0], NULL, uploadThread,
+                                   (void*) &listenSocket);
+//    			pthread_join(uploadThreadID[0], NULL);
+                }
+            }
+            else if (action == "get")
+            {
+                if (argument.size() < 2)
+                {
+                    printf("Invalid argument : <filename.torrent>\n");
+                }
+                {
+
+                    //TODO gdy nie zostanie utworzony watek do pobierania trzeba podzielic rzeczy do pobrania po rowno
+                    string trackerResponse = connectWithTracker(argument[1],
+                                                                "get");
+                    printf("%s\n", trackerResponse.c_str());
+                    vector<string> peers = split(trackerResponse, '$');
+                    int numberOfPeers = peers.size() - 1;
+
+                    for (int i = currDownloaderCount;
+                            i < DOWNLOADER_COUNT && i < numberOfPeers
+                            && currDownloaderCount < DOWNLOADER_COUNT; i++)
+                    {
+                        downloadingParams[i].peer = peers[i];
+                        pthread_create(&downloadThreadID[i], NULL,
+                                       downloadThread,
+                                       (void*) &downloadingParams[i]);
+                        currDownloaderCount++;
+                    }
+                }
+            }
+            else if (action == "remove")
+            {
+                if (argument.size() < 2)
+                {
+                    printf("Invalid argument : <filename.torrent>\n");
+                }
+                else
+                {
+                    string trackerResponse = connectWithTracker(argument[1],
+                                                                "remove");
+                    printf("%s\n", trackerResponse.c_str());
+                }
+            }
+            else if (action == "list")
+            {
+                string trackerResponse = getListFromTracker();
+                printf("%s\n", trackerResponse.c_str());
             }
             else
             {
-                string trackerResponse = connectWithTracker(argument[1], "remove");
-				printf("%s\n", trackerResponse.c_str());
-			}
+                printf("Unnkown command!\n");
+            }
         }
-        else if(action == "list")
-        {
-            string trackerResponse = getListFromTracker();
-			printf("%s\n", trackerResponse.c_str());
-        }
-        else
-        {
-        	printf("Unnkown command!\n");
-        }
-
         for (int i = 0; i < DOWNLOADER_COUNT; i++)
         {
             if (downloadingParams[i].done == true)
@@ -463,4 +487,20 @@ void* downloadThread(void* arg)
     pthread_mutex_unlock(&(*(params_t*)(arg)).mutex);
     (*(params_t*)(arg)).done = true;
     return NULL;
+}
+
+void* ioTask(void* arg)
+{
+    params_t *nArg = &(*(params_t*) (arg));
+    printf("waiting for input: \n");
+
+    pthread_mutex_lock(&(*nArg).mutex);
+
+    string args;
+    getline(cin, args);
+
+    nArg->peer = args; //actually it is not peer but what was read
+    nArg->done = true;
+    pthread_mutex_unlock(&(*nArg).mutex);
+    pthread_exit(NULL);
 }
