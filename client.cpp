@@ -16,9 +16,9 @@ using namespace std;
 
 struct params_t {
         pthread_mutex_t mutex;
-        bool done;
-        int id;
-        string peer;
+        bool done = false;
+        int intData;
+        string stringData = string(" ");
 };
 
 
@@ -51,6 +51,9 @@ void* downloadThread(void*);
 // IO task
 void* ioTask(void*);
 
+// accepting task
+void* acceptTask(void*);
+
 int main(int argc, char* argv[])
 {
     // Check if arguments are valid
@@ -82,6 +85,11 @@ int main(int argc, char* argv[])
     pthread_t ioThread;
     params_t ioThreadParams;
 
+    // Create accepter thread
+    pthread_t accepterThread;
+    params_t accepterThreadParams;
+
+
     array<params_t, UPLOADER_COUNT> uploadingParams;
     array<params_t, DOWNLOADER_COUNT> downloadingParams;
     unsigned currDownloaderCount = 0;
@@ -96,17 +104,48 @@ int main(int argc, char* argv[])
     }
     string action, args;
     
+    pthread_mutex_init(&ioThreadParams.mutex, NULL);
+    pthread_mutex_init(&accepterThreadParams.mutex, NULL);
+
+
 
     pthread_create(&ioThread, NULL, ioTask,
                    (void*) &ioThreadParams);
 
-    while(true)
+    accepterThreadParams.intData = listenSocket;
+    pthread_create(&accepterThread, NULL, acceptTask,
+                   (void*) &accepterThreadParams);
+
+
+    while (true)
     {
+        //check accepter
+        int gotSocket = 0;
+        if (accepterThreadParams.done)
+        {
+            pthread_join(accepterThread, NULL);
+
+            if(accepterThreadParams.intData != listenSocket){
+
+                uploadingParams[0] = accepterThreadParams;
+                pthread_create(&uploadThreadID[0], NULL, uploadThread,
+                                       (void*) &uploadingParams[0]);
+            }
+
+            gotSocket = accepterThreadParams.intData;
+            accepterThreadParams.done = false;
+            accepterThreadParams.intData = listenSocket;
+            pthread_create(&accepterThread, NULL, acceptTask,
+                           (void*) &accepterThreadParams);
+        }
+
+
+
         //check IO
         if (ioThreadParams.done)
         {
             pthread_join(ioThread, NULL);
-            args = ioThreadParams.peer;
+            args = ioThreadParams.stringData;
             ioThreadParams.done = false;
             pthread_create(&ioThread, NULL, ioTask,
                            (void*) &ioThreadParams);
@@ -136,8 +175,8 @@ int main(int argc, char* argv[])
                     string trackerResponse = connectWithTracker(argument[1],
                                                                 "share");
                     printf("%s\n", trackerResponse.c_str());
-                    pthread_create(&uploadThreadID[0], NULL, uploadThread,
-                                   (void*) &listenSocket);
+//                    pthread_create(&uploadThreadID[0], NULL, uploadThread,
+//                                   (void*) &listenSocket);
 //    			pthread_join(uploadThreadID[0], NULL);
                 }
             }
@@ -147,6 +186,7 @@ int main(int argc, char* argv[])
                 {
                     printf("Invalid argument : <filename.torrent>\n");
                 }
+                else
                 {
 
                     //TODO gdy nie zostanie utworzony watek do pobierania trzeba podzielic rzeczy do pobrania po rowno
@@ -160,7 +200,7 @@ int main(int argc, char* argv[])
                             i < DOWNLOADER_COUNT && i < numberOfPeers
                             && currDownloaderCount < DOWNLOADER_COUNT; i++)
                     {
-                        downloadingParams[i].peer = peers[i];
+                        downloadingParams[i].stringData = peers[i];
                         pthread_create(&downloadThreadID[i], NULL,
                                        downloadThread,
                                        (void*) &downloadingParams[i]);
@@ -191,6 +231,8 @@ int main(int argc, char* argv[])
                 printf("Unnkown command!\n");
             }
         }
+
+
         for (int i = 0; i < DOWNLOADER_COUNT; i++)
         {
             if (downloadingParams[i].done == true)
@@ -200,12 +242,24 @@ int main(int argc, char* argv[])
                 currDownloaderCount--;
             }
         }
-
+        for (int i = 0; i < UPLOADER_COUNT; i++)
+        {
+            if (uploadingParams[i].done == true)
+            {
+                uploadingParams[i].done = false;
+                pthread_join(uploadThreadID[i], NULL);
+                currUploaderCount--;
+            }
+        }
     }
 
     for (auto &downloader : downloadingParams)
     {
         pthread_mutex_destroy(&downloader.mutex);
+    }
+    for (auto &uploader : uploadingParams)
+    {
+        pthread_mutex_destroy(&uploader.mutex);
     }
     return 0;
 }
@@ -370,40 +424,14 @@ string getListFromTracker()
     return trackerResponse;
 }
 
+
 void* uploadThread(void* arg) {
     printf("Uploader Thread %lu created\n", pthread_self());
-    int listenSocket = *(static_cast <int*> (arg));
+    params_t* nArg = &(*(params_t*)(arg));
+    int clientSocket = nArg->intData;
+    string file = nArg->stringData;
 
     
-    sockaddr_in clientAddr;
-    unsigned clientLen = sizeof(clientAddr);
-    memset(&clientAddr, 0, clientLen);
-
-    // Accept one client request
-    int clientSocket = accept(listenSocket,(sockaddr*) &clientAddr, (socklen_t*)&clientLen);
-
-    printf("Connected to peer for upload\n");
-
-    char clientRequest[BUFF_SIZE];
-    memset(clientRequest, 0, BUFF_SIZE);
-
-    int requestMsgLen = recv(clientSocket, clientRequest, BUFF_SIZE, 0);
-
-    if(requestMsgLen < 0)
-    {
-        perror("recv() failed");
-        closeSocket(clientSocket);
-    }
-
-    // Connection closed by client
-    if(requestMsgLen == 0)
-    {
-        printf("Connection closed from client side\n");
-        closeSocket(clientSocket);
-    }
-
-    printf("Got request\n");
-
     string peerData = "Sending a string.";
 
     int requestLen = peerData.size();
@@ -423,7 +451,7 @@ void* downloadThread(void* arg)
 {
     printf("Downloader Thread %lu created\n", pthread_self());
     params_t* nArg = &(*(params_t*)(arg));
-    std::string trackerResponse = (static_cast <std::string> (nArg->peer));
+    std::string trackerResponse = (static_cast <std::string> (nArg->stringData));
     printf("%s\n", trackerResponse.c_str());
 
     pthread_mutex_lock(&(*nArg).mutex);
@@ -493,14 +521,53 @@ void* ioTask(void* arg)
 {
     params_t *nArg = &(*(params_t*) (arg));
     printf("waiting for input: \n");
-
     pthread_mutex_lock(&(*nArg).mutex);
 
     string args;
     getline(cin, args);
 
-    nArg->peer = args; //actually it is not peer but what was read
+    nArg->stringData = args; //actually it is not peer but what was read
     nArg->done = true;
     pthread_mutex_unlock(&(*nArg).mutex);
     pthread_exit(NULL);
 }
+
+void* acceptTask(void* arg)
+{
+    static constexpr unsigned bufSize = 1024;
+    params_t *nArg = &(*(params_t*) (arg));
+    int listenSocket = nArg->intData;
+    pthread_mutex_lock(&(*nArg).mutex);
+
+    sockaddr_in clientAddr;
+    unsigned clientLen = sizeof(clientAddr);
+    memset(&clientAddr, 0, clientLen);
+    int clientSocket = accept(listenSocket,(sockaddr*) &clientAddr, (socklen_t*)&clientLen);
+
+
+    char clientRequest[bufSize];
+    memset(clientRequest, 0, bufSize);
+
+
+    int requestMsgLen = recv(clientSocket, clientRequest, bufSize, 0);
+
+    if(requestMsgLen < 0)
+    {
+        perror("recv() failed");
+        closeSocket(clientSocket);
+    }
+
+    // Connection closed by client
+    if(requestMsgLen == 0)
+    {
+        printf("Connection closed from client side\n");
+        closeSocket(clientSocket);
+    }
+
+    nArg->stringData = string(clientRequest);
+    nArg->intData = clientSocket;
+    nArg->done = true;
+    pthread_mutex_unlock(&(*nArg).mutex);
+    pthread_exit(NULL);
+}
+
