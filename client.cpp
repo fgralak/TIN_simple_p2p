@@ -7,9 +7,13 @@
 #include <sstream>
 #include <vector>
 #include <array>
+#include <unistd.h>
+#include <charconv>
 #include "helper_functions.h"
 #include "torrent_parser.h"
 #include "bencode_parser.h"
+#include "frame_definitions.h"
+
 
 using namespace std;
 
@@ -18,7 +22,14 @@ struct params_t {
         pthread_mutex_t mutex;
         bool done = false;
         int intData;
-        string stringData = string(" ");
+        string stringData;
+        string stringData1;
+
+        params_t()
+        {
+            stringData.reserve(64);
+            stringData1.reserve(64);
+        }
 };
 
 
@@ -127,9 +138,10 @@ int main(int argc, char* argv[])
 
             if(accepterThreadParams.intData != listenSocket){
 
-                uploadingParams[0] = accepterThreadParams;
-                pthread_create(&uploadThreadID[0], NULL, uploadThread,
-                                       (void*) &uploadingParams[0]);
+                uploadingParams[currUploaderCount] = accepterThreadParams;
+                pthread_create(&uploadThreadID[currUploaderCount], NULL, uploadThread,
+                                       (void*) &uploadingParams[currUploaderCount]);
+                currUploaderCount++;
             }
 
             gotSocket = accepterThreadParams.intData;
@@ -173,11 +185,8 @@ int main(int argc, char* argv[])
                 else
                 {
                     string trackerResponse = connectWithTracker(argument[1],
-                                                                "share");
+                                                                to_string(ServerNodeCode::NodeNewFileAdded));
                     printf("%s\n", trackerResponse.c_str());
-//                    pthread_create(&uploadThreadID[0], NULL, uploadThread,
-//                                   (void*) &listenSocket);
-//    			pthread_join(uploadThreadID[0], NULL);
                 }
             }
             else if (action == "get")
@@ -191,20 +200,28 @@ int main(int argc, char* argv[])
 
                     //TODO gdy nie zostanie utworzony watek do pobierania trzeba podzielic rzeczy do pobrania po rowno
                     string trackerResponse = connectWithTracker(argument[1],
-                                                                "get");
-                    printf("%s\n", trackerResponse.c_str());
-                    vector<string> peers = split(trackerResponse, '$');
-                    int numberOfPeers = peers.size() - 1;
-
-                    for (int i = currDownloaderCount;
-                            i < DOWNLOADER_COUNT && i < numberOfPeers
-                            && currDownloaderCount < DOWNLOADER_COUNT; i++)
+                                                                to_string(ServerNodeCode::NodeOwnerListRequest));
+                    if (trackerResponse == "empty")
                     {
-                        downloadingParams[i].stringData = peers[i];
-                        pthread_create(&downloadThreadID[i], NULL,
-                                       downloadThread,
-                                       (void*) &downloadingParams[i]);
-                        currDownloaderCount++;
+                        printf("file is not present in the network");
+
+                    }
+                    else
+                    {
+                        vector<string> peers = split(trackerResponse, '$');
+                        int numberOfPeers = peers.size() - 1;
+
+                        for (int i = currDownloaderCount;
+                                i < DOWNLOADER_COUNT && i < numberOfPeers
+                                && currDownloaderCount < DOWNLOADER_COUNT; i++)
+                        {
+                            downloadingParams[i].stringData = peers[i];
+                            downloadingParams[i].stringData1 = argument[1];
+                            pthread_create(&downloadThreadID[i], NULL,
+                                           downloadThread,
+                                           (void*) &downloadingParams[i]);
+                            currDownloaderCount++;
+                        }
                     }
                 }
             }
@@ -217,7 +234,7 @@ int main(int argc, char* argv[])
                 else
                 {
                     string trackerResponse = connectWithTracker(argument[1],
-                                                                "remove");
+                                                                to_string(ServerNodeCode::NodeFileDisclaim));
                     printf("%s\n", trackerResponse.c_str());
                 }
             }
@@ -390,7 +407,7 @@ string getListFromTracker()
 
     printf("Connected to tracker\n");
 
-    string trackerRequest = "list$";
+    string trackerRequest = to_string(ServerNodeCode::NodeFileListRequest) + "$";
 
     int requestLen = trackerRequest.size();
     if(sendAll(sockFD, trackerRequest.c_str(), requestLen) == -1)
@@ -432,6 +449,19 @@ void* uploadThread(void* arg) {
     string file = nArg->stringData;
 
     
+    if( access( file.c_str(), F_OK ) != 0 ) {
+        // file doesnt exist
+        int responseLen = sizeof(NodeNodeCode::NoSuchFile);
+        char buf[responseLen] = {0};
+        std::to_chars(buf, buf+responseLen, NodeNodeCode::NoSuchFile);
+        if(sendAll(clientSocket, buf, responseLen) != 0)
+        {
+            perror("file doesnt exist");
+        }
+    } else {
+        // file exist
+    }
+
     string peerData = "Sending a string.";
 
     int requestLen = peerData.size();
@@ -479,7 +509,7 @@ void* downloadThread(void* arg)
 
     // Send request to connected peer
     printf("Connected to peer %s:%d\n", bencodeParser.peer_ip[0].c_str(), bencodeParser.peer_port[0]);
-    std::string peerRequest = "Check connection.";
+    std::string peerRequest = nArg->stringData1;
 
     int requestLen = peerRequest.size();
     if(sendAll(sockFD, peerRequest.c_str(), requestLen) != 0)
@@ -493,6 +523,13 @@ void* downloadThread(void* arg)
     memset(peerResponse, 0, BUFF_SIZE);
 
     int responseLen = recv(sockFD, peerResponse, BUFF_SIZE, 0);
+
+
+    string checkNoFile = string(peerResponse).substr(0, 3);
+    if(checkNoFile == to_string(NodeNodeCode::NoSuchFile))
+    {
+        // handle no file
+    }
 
     if(responseLen < 0)
     {

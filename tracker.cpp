@@ -8,6 +8,7 @@
 #include <vector>
 #include "helper_functions.h"
 #include "bencode_parser.h"
+#include "frame_definitions.h"
 
 using namespace std;
 
@@ -128,7 +129,7 @@ void* serverWorker(void* arg)
 
         BencodeParser bencodeParser(request[1]);
 
-        if(request[0] != "list")
+        if(request[0] != to_string(ServerNodeCode::NodeFileListRequest))
         {
 	        printf("%s\n", request[1]);
 	        bencodeParser.print_details();
@@ -136,11 +137,11 @@ void* serverWorker(void* arg)
 
         string trackerResponse = "";
 
-        if(request[0] == "share")
+        if(request[0] == to_string(ServerNodeCode::NodeNewFileAdded))
         {
             trackerResponse = addToList(bencodeParser.filename, inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
         }
-        else if(request[0] == "get")
+        else if(request[0] == to_string(ServerNodeCode::NodeOwnerListRequest))
         {
             ClientList clientList = getListOfClients(bencodeParser.filename);
             for(auto client : clientList)
@@ -152,11 +153,11 @@ void* serverWorker(void* arg)
                 trackerResponse += "i" + to_string(client.second) + "e$";
             }
         }
-        else if(request[0] == "remove")
+        else if(request[0] == to_string(ServerNodeCode::NodeFileDisclaim))
         {
             trackerResponse = removeFromList(bencodeParser.filename, inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
         }
-        else if(request[0] == "list")
+        else if(request[0] == to_string(ServerNodeCode::NodeFileListRequest))
         {
         	trackerResponse = getListOfFiles();
         }
