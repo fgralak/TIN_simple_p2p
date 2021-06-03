@@ -8,7 +8,9 @@
 #include <vector>
 #include <array>
 #include <unistd.h>
+#include <limits>
 #include <charconv>
+#include <fstream>
 #include "helper_functions.h"
 #include "torrent_parser.h"
 #include "bencode_parser.h"
@@ -38,6 +40,7 @@ const int UPLOADER_COUNT = 1;
 const int DOWNLOADER_COUNT = 1;
 const string TRACKER_IP = "127.0.0.1";
 const string TRACKER_PORT = "4500";
+static constexpr unsigned MAX_SEND_SIZE = 1024;
 
 int listenPort;
 
@@ -250,6 +253,8 @@ int main(int argc, char* argv[])
         }
 
 
+
+        // join joinable
         for (int i = 0; i < DOWNLOADER_COUNT; i++)
         {
             if (downloadingParams[i].done == true)
@@ -446,10 +451,10 @@ void* uploadThread(void* arg) {
     printf("Uploader Thread %lu created\n", pthread_self());
     params_t* nArg = &(*(params_t*)(arg));
     int clientSocket = nArg->intData;
-    string file = nArg->stringData;
+    string fileStr = TorrentParser(nArg->stringData).filename;
 
     
-    if( access( file.c_str(), F_OK ) != 0 ) {
+    if( access( fileStr.c_str(), F_OK ) != 0 ) {
         // file doesnt exist
         int responseLen = sizeof(NodeNodeCode::NoSuchFile);
         char buf[responseLen] = {0};
@@ -462,18 +467,26 @@ void* uploadThread(void* arg) {
         // file exist
     }
 
-    string peerData = "Sending a string.";
 
-    int requestLen = peerData.size();
-    if(sendAll(clientSocket, peerData.c_str(), requestLen) != 0)
+    ifstream file;
+    file.open(fileStr, ios::in | ios::binary);
+    file.ignore(numeric_limits<streamsize>::max());
+    streamsize length = file.gcount();
+    file.clear();   //  Since ignore will have set eof.
+    file.seekg(0, std::ios_base::beg);
+
+    char buffer[MAX_SEND_SIZE] = {0};
+
+    int i =length;
+    while(i!=0)
     {
-        perror("sendAll() failed");
-        printf("Only sent %d bytes\n", requestLen);
+        int sendSize = min(i, (int)MAX_SEND_SIZE);
+        if(!file.read(buffer, sendSize)) {printf("senderror");}
+        int sl = sendAll(clientSocket, buffer, sendSize);
+        i -= sl;
     }
-
+    file.close();
     closeSocket(clientSocket);
-
-
     return NULL;
 }
 
@@ -511,6 +524,9 @@ void* downloadThread(void* arg)
     printf("Connected to peer %s:%d\n", bencodeParser.peer_ip[0].c_str(), bencodeParser.peer_port[0]);
     std::string peerRequest = nArg->stringData1;
 
+    auto size = TorrentParser(peerRequest).filesize;
+    auto fName = TorrentParser(peerRequest).filename;
+
     int requestLen = peerRequest.size();
     if(sendAll(sockFD, peerRequest.c_str(), requestLen) != 0)
     {
@@ -518,35 +534,53 @@ void* downloadThread(void* arg)
         printf("Only sent %d bytes\n", requestLen);
     }
 
-    // Get response from connected peer
-    char peerResponse[BUFF_SIZE];
-    memset(peerResponse, 0, BUFF_SIZE);
+    char peerResponse[BUFF_SIZE] = {0};
 
-    int responseLen = recv(sockFD, peerResponse, BUFF_SIZE, 0);
-
-
+    int i = 0;
+    int responseLen = 0;
+    responseLen = recv(sockFD, peerResponse, BUFF_SIZE, 0);
+    i += responseLen;
     string checkNoFile = string(peerResponse).substr(0, 3);
-    if(checkNoFile == to_string(NodeNodeCode::NoSuchFile))
+    if (checkNoFile == to_string(NodeNodeCode::NoSuchFile))
     {
         // handle no file
     }
-
-    if(responseLen < 0)
+    else if (responseLen < 0)
     {
         perror("recv() failed");
         closeSocket(sockFD);
         return NULL;
     }
-
     // Connection closed by client
-    if(responseLen == 0)
+    else if(responseLen == 0)
     {
         printf("Connection closed from client side\n");
         closeSocket(sockFD);
         return NULL;
     }
+    else
+    {
+        ofstream file(fName);
+        if (file.is_open())
+        {
+            file.write(peerResponse, responseLen);
+            i += responseLen;
+            while (i < size)
+            {
+                responseLen = recv(sockFD, peerResponse, BUFF_SIZE, 0);
+                file.write(peerResponse, responseLen);
+                i += responseLen;
+            }
+        file.close();
+        }
+        else
+        {
+            printf("downloaded file creation error");
+        }
+    }
 
-    printf("Downloaded data: %s\n", peerResponse);
+
+//    printf("Downloaded data: %s\n", peerResponse);
     closeSocket(sockFD);
 
     pthread_mutex_unlock(&(*(params_t*)(arg)).mutex);
