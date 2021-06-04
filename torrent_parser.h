@@ -17,7 +17,7 @@ public:
     string filename;
     int filesize;
 
-    TorrentParser(string torrentfile = "") :
+    TorrentParser(string torrentfile = "", string resourceDirectory = "") :
 	trackerIP(""), trackerPort(-1), filename(""), filesize(0)
     {
         if(torrentfile == "")
@@ -26,7 +26,12 @@ public:
             return;
         }
         
-        ifstream fileIn(torrentfile);
+        string resourceFilename = torrentfile;
+        if(resourceDirectory != "")
+        {
+            resourceFilename = resourceDirectory+"/"+torrentfile;
+        }
+        ifstream fileIn(resourceFilename);
         if(!fileIn.is_open())
         {
             printf("Couldn't open file %s\n", torrentfile);

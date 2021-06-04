@@ -44,6 +44,8 @@ static constexpr unsigned MAX_SEND_SIZE = 1024;
 
 int listenPort;
 
+string resourceDirectory = "";
+
 // Split string into parts
 vector<string> split(string, char);
 
@@ -75,6 +77,15 @@ int main(int argc, char* argv[])
     {
         printf("Usage: %s <Port>\n", argv[0]);
         exit(EXIT_FAILURE);
+    }
+
+    if(argc > 2)
+    {
+        resourceDirectory = argv[2];
+    }
+    else
+    {
+        resourceDirectory = "";
     }
 
     listenPort = atoi(argv[1]);
@@ -307,16 +318,21 @@ void createTorrentFile(string name)
 {
 
     ifstream file;
-    file.open(name, ios::in | ios::binary);
+    string resourceName = name;
+    if(resourceDirectory != "")
+    {
+        resourceName = resourceDirectory+"/"+name;
+    }
+    file.open(resourceName, ios::in | ios::binary);
     file.ignore(numeric_limits<streamsize>::max());
     streamsize filesize = file.gcount();
     file.clear();   //  Since ignore will have set eof.
     file.seekg(0, std::ios_base::beg);
     file.close();
 
-    vector<string>T = split(name, '.');
+    vector<string>T = split(resourceName, '.');
     string initname = T[0];
-    initname += ".torrent"; 
+    initname += ".torrent";
     FILE* output = fopen(initname.c_str(), "w");
     fprintf(output,"announceip %s\n", TRACKER_IP.c_str());
     fprintf(output,"announceport %s\n", TRACKER_PORT.c_str());
@@ -330,7 +346,7 @@ void createTorrentFile(string name)
 string connectWithTracker(string torrentfile, string msg)
 {
     // Parse .torrent file
-    TorrentParser torrentParser(torrentfile);
+    TorrentParser torrentParser(torrentfile, resourceDirectory);
 
     // Server address
     sockaddr_in serverAddr;
@@ -456,14 +472,17 @@ void* uploadThread(void* arg) {
     params_t* nArg = &(*(params_t*)(arg));
     int clientSocket = nArg->intData;
     string fileStr = TorrentParser(nArg->stringData).filename;
+    if(resourceDirectory != "")
+    {
+        fileStr = resourceDirectory+"/"+fileStr;
+    }
 
-    
-    if( access( fileStr.c_str(), F_OK ) != 0 ) {
+
+if( access( fileStr.c_str(), F_OK ) != 0 ) {
         // file doesnt exist
-        int responseLen = sizeof(NodeNodeCode::NoSuchFile);
-        char buf[responseLen] = {0};
-        std::to_chars(buf, buf+responseLen, NodeNodeCode::NoSuchFile);
-        if(sendAll(clientSocket, buf, responseLen) != 0)
+        string str = to_string(NodeNodeCode::NoSuchFile);
+        int len =  str.length();
+        if(sendAll(clientSocket, str.c_str(), len) != 0)
         {
             perror("file doesnt exist");
         }
@@ -530,6 +549,11 @@ void* downloadThread(void* arg)
 
     auto size = TorrentParser(peerRequest).filesize;
     auto fName = TorrentParser(peerRequest).filename;
+    auto resourceFilename = fName;
+    if(resourceDirectory != "")
+    {
+        resourceFilename = resourceDirectory+"/"+fName;
+    }
 
     int requestLen = peerRequest.size();
     if(sendAll(sockFD, peerRequest.c_str(), requestLen) != 0)
@@ -565,7 +589,7 @@ void* downloadThread(void* arg)
     }
     else
     {
-        ofstream file(fName);
+        ofstream file(resourceFilename);
         if (file.is_open())
         {
             file.write(peerResponse, responseLen);
