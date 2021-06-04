@@ -486,7 +486,7 @@ void* uploadThread(void* arg) {
     {
         int sendSize = min(i, (int)MAX_SEND_SIZE);
         if(!file.read(buffer, sendSize)) {printf("senderror");}
-        int sl = sendAll(clientSocket, buffer, sendSize);
+        int sl = send(clientSocket, buffer, sendSize, 0);
         i -= sl;
     }
     file.close();
@@ -529,7 +529,7 @@ void* downloadThread(void* arg)
     std::string peerRequest = nArg->stringData1;
 
     auto size = TorrentParser(peerRequest).filesize;
-    auto fName = "duuupa.cpp";
+    auto fName = TorrentParser(peerRequest).filename;
 
     int requestLen = peerRequest.size();
     if(sendAll(sockFD, peerRequest.c_str(), requestLen) != 0)
@@ -572,7 +572,7 @@ void* downloadThread(void* arg)
             while (i > 0)
             {
                 toRecieve = min(i, (int)MAX_SEND_SIZE);
-                responseLen = recv(sockFD, peerResponse, toRecieve, 0);
+                responseLen = recvfrom(sockFD, peerResponse, toRecieve, 0, NULL, NULL);
                 file.write(peerResponse, responseLen);
                 i -= responseLen;
             }
