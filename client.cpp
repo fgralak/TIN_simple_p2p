@@ -305,10 +305,14 @@ vector<string> split(string txt, char ch)
 
 void createTorrentFile(string name)
 {
-	string fs_name = name;
-    ifstream in(fs_name.c_str(), ifstream::ate | ifstream::binary);
-    int filesize = in.tellg(); 
-    in.close();
+
+    ifstream file;
+    file.open(name, ios::in | ios::binary);
+    file.ignore(numeric_limits<streamsize>::max());
+    streamsize filesize = file.gcount();
+    file.clear();   //  Since ignore will have set eof.
+    file.seekg(0, std::ios_base::beg);
+    file.close();
 
     vector<string>T = split(name, '.');
     string initname = T[0];
@@ -525,7 +529,7 @@ void* downloadThread(void* arg)
     std::string peerRequest = nArg->stringData1;
 
     auto size = TorrentParser(peerRequest).filesize;
-    auto fName = TorrentParser(peerRequest).filename;
+    auto fName = "duuupa.cpp";
 
     int requestLen = peerRequest.size();
     if(sendAll(sockFD, peerRequest.c_str(), requestLen) != 0)
@@ -536,10 +540,11 @@ void* downloadThread(void* arg)
 
     char peerResponse[BUFF_SIZE] = {0};
 
-    int i = 0;
+    int i = size;
     int responseLen = 0;
-    responseLen = recv(sockFD, peerResponse, BUFF_SIZE, 0);
-    i += responseLen;
+    int toRecieve = min(size, (int)MAX_SEND_SIZE);
+    responseLen = recv(sockFD, peerResponse, toRecieve, 0);
+    i -= responseLen;
     string checkNoFile = string(peerResponse).substr(0, 3);
     if (checkNoFile == to_string(NodeNodeCode::NoSuchFile))
     {
@@ -564,12 +569,12 @@ void* downloadThread(void* arg)
         if (file.is_open())
         {
             file.write(peerResponse, responseLen);
-            i += responseLen;
-            while (i < size)
+            while (i > 0)
             {
-                responseLen = recv(sockFD, peerResponse, BUFF_SIZE, 0);
+                toRecieve = min(i, (int)MAX_SEND_SIZE);
+                responseLen = recv(sockFD, peerResponse, toRecieve, 0);
                 file.write(peerResponse, responseLen);
-                i += responseLen;
+                i -= responseLen;
             }
         file.close();
         }
@@ -580,7 +585,8 @@ void* downloadThread(void* arg)
     }
 
 
-//    printf("Downloaded data: %s\n", peerResponse);
+    printf("Downloaded file %s\n", fName);
+    connectWithTracker(peerRequest, to_string(ServerNodeCode::NodeFileDownloaded));
     closeSocket(sockFD);
 
     pthread_mutex_unlock(&(*(params_t*)(arg)).mutex);

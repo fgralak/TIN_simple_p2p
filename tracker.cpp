@@ -161,6 +161,10 @@ void* serverWorker(void* arg)
         {
         	trackerResponse = getListOfFiles();
         }
+        else if(request[0] ==to_string(ServerNodeCode::NodeFileDownloaded)) {
+            addToList(bencodeParser.filename, inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
+         }
+
 
         if(trackerResponse == "")
             trackerResponse = "empty";
