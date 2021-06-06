@@ -63,6 +63,9 @@ void* ioTask(void*);
 // accepting task
 void* acceptTask(void*);
 
+// Creates a connection with tracker, returns socket
+int createConnection(string serverIp, int serverPort);
+
 int main(int argc, char* argv[])
 {
     // Check if arguments are valid
@@ -336,30 +339,34 @@ void createTorrentFile(string name, int filesize)
     fclose(output);
 }
 
-string connectWithTracker(string torrentfile, string msg)
+int createConnection(string ip, int port)
 {
-    // Parse .torrent file
-    TorrentParser torrentParser(torrentfile, resourceDirectory);
-
     // Server address
     sockaddr_in serverAddr;
     unsigned serverAddrLen = sizeof(serverAddr);
     memset(&serverAddr, 0, serverAddrLen);
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr(torrentParser.trackerIP.c_str());
-    serverAddr.sin_port = htons(torrentParser.trackerPort);
+    serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());
+    serverAddr.sin_port = htons(port);
 
     // Create a socket and connect to tracker
     int sockFD = createTCPSocket();	
     int connectRetVal = connect(sockFD, (sockaddr*) &serverAddr, serverAddrLen);
     if(connectRetVal < 0)
     {
-        perror("connect() to tracker");
+        string errorMsg = "connect() to "+ip+":"+to_string(port);
+        perror(errorMsg.c_str());
         closeSocket(sockFD);
         exit(EXIT_FAILURE);
     }
+    printf("Created connection with %s:%d\n", ip.c_str(), port);
+    return sockFD;
+}
 
-    printf("Connected to tracker\n");
+string connectWithTracker(string torrentfile, string msg)
+{
+    TorrentParser torrentParser(torrentfile, resourceDirectory);
+    int sockFD = createConnection(torrentParser.trackerIP, torrentParser.trackerPort);
 
     string trackerRequest = msg + "$";
     trackerRequest += "8:filename";
@@ -405,25 +412,7 @@ string connectWithTracker(string torrentfile, string msg)
 
 string getListFromTracker()
 {
-    // Server address
-    sockaddr_in serverAddr;
-    unsigned serverAddrLen = sizeof(serverAddr);
-    memset(&serverAddr, 0, serverAddrLen);
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr(TRACKER_IP.c_str());
-    serverAddr.sin_port = htons(stoi(trackerPort));
-
-    // Create a socket and connect to tracker
-    int sockFD = createTCPSocket();
-    int connectRetVal = connect(sockFD, (sockaddr*) &serverAddr, serverAddrLen);
-    if(connectRetVal < 0)
-    {
-        perror("connect() to tracker");
-        closeSocket(sockFD);
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Connected to tracker\n");
+    int sockFD = createConnection(TRACKER_IP.c_str(), stoi(trackerPort));
 
     string trackerRequest = to_string(ServerNodeCode::NodeFileListRequest) + "$";
 
@@ -551,23 +540,7 @@ void* downloadThread(void* arg)
     // Parse the tracker response
     BencodeParser bencodeParser(trackerResponse);
 
-    // Peer address
-    sockaddr_in peerAddr;
-    unsigned peerAddrLen = sizeof(peerAddr);
-    memset(&peerAddr, 0, peerAddrLen);
-    peerAddr.sin_family = AF_INET;
-    peerAddr.sin_addr.s_addr = inet_addr(bencodeParser.peer_ip[0].c_str());
-    peerAddr.sin_port = htons(bencodeParser.peer_port[0]);
-
-    // Create a socket and connect to the peer
-    int sockFD = createTCPSocket();
-    int connectRetVal = connect(sockFD, (sockaddr*) &peerAddr, peerAddrLen);
-    if(connectRetVal < 0)
-    {
-        perror("connect() to peer");
-        closeSocket(sockFD);
-        exit(EXIT_FAILURE);
-    }
+    int sockFD = createConnection(bencodeParser.peer_ip[0], bencodeParser.peer_port[0]);
 
     // Send request to connected peer
     printf("Connected to peer %s:%d\n", bencodeParser.peer_ip[0].c_str(), bencodeParser.peer_port[0]);
