@@ -28,6 +28,9 @@ ClientList clientsOffline;
 // Filename -> File size
 map <string, int > filesizeMap;
 
+// Filename -> Owner IP, Owner port
+map <string, pair<string, int>> fileOwner;
+
 // Mutex for mapping
 pthread_mutex_t mappingMutex;
 
@@ -236,6 +239,10 @@ string addToList(string filename, string ip, int port, int filesize)
                 filesizeMap[filename] = filesize;
             }
             mapping[filename].push_back({ip, port});
+            if(mapping[filename].size() == 1)
+            {
+                fileOwner[filename] = make_pair(ip, port);
+            }
             response = "Client details added to the list.";
         }
     }
@@ -248,24 +255,34 @@ string removeFromList(string filename, string ip, int port)
     // Add this client to the list
     pthread_mutex_lock(&mappingMutex);
     string response = "Client is not on the list.";
-    for(auto map_iter = mapping.begin(); map_iter != mapping.end() ; ++map_iter)
+    if(fileOwner[filename] == make_pair(ip, port))
     {
-        if(map_iter->first == filename)
+        mapping.erase(filename);
+        filesizeMap.erase(filename);
+        fileOwner.erase(filename);
+        response = "File tracking stopped, file info removed";
+    }
+    else
+    {
+        for(auto map_iter = mapping.begin(); map_iter != mapping.end() ; ++map_iter)
         {
-            for(auto vec_iter = map_iter->second.begin(); vec_iter != map_iter->second.end(); ++vec_iter)
+            if(map_iter->first == filename)
             {
-                if(vec_iter->first == ip && vec_iter->second == port)
+                for(auto vec_iter = map_iter->second.begin(); vec_iter != map_iter->second.end(); ++vec_iter)
                 {
-                    map_iter->second.erase(vec_iter);
-                    response = "Client details removed from the list.";
-                    break;
+                    if(vec_iter->first == ip && vec_iter->second == port)
+                    {
+                        map_iter->second.erase(vec_iter);
+                        response = "Client details removed from the list.";
+                        break;
+                    }
                 }
             }
-        }
-        if(map_iter->second.size() == 0)
-        {
-        	mapping.erase(map_iter);
-        	break;
+            if(map_iter->second.size() == 0)
+            {
+            	mapping.erase(map_iter);
+            	break;
+            }
         }
     }
     pthread_mutex_unlock(&mappingMutex);
