@@ -9,6 +9,7 @@
 #include "helper_functions.h"
 #include "bencode_parser.h"
 #include "frame_definitions.h"
+#include "constants.h"
 
 using namespace std;
 
@@ -21,17 +22,17 @@ atomic <bool> terminateAllThreads;
 // Filename -> Vector (IP, Port)
 map < string, ClientList > mapping;
 
+// Filename -> File size
+map <string, int > filesizeMap;
+
 // Mutex for mapping
 pthread_mutex_t mappingMutex;
 
 // Function each thread executes
 void* serverWorker(void*);
 
-// Split string into parts
-vector<string> split(string, char);
-
 // Add the client details to mapping
-string addToList(string, string, int);
+string addToList(string, string, int, int filesize = 0);
 
 // Remove the client details from mapping
 string removeFromList(string, string, int);
@@ -139,7 +140,7 @@ void* serverWorker(void* arg)
 
         if(request[0] == to_string(ServerNodeCode::NodeNewFileAdded))
         {
-            trackerResponse = addToList(bencodeParser.filename, inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
+            trackerResponse = addToList(bencodeParser.filename, inet_ntoa(clientAddr.sin_addr), bencodeParser.port, bencodeParser.filesize);
         }
         else if(request[0] == to_string(ServerNodeCode::NodeOwnerListRequest))
         {
@@ -184,24 +185,7 @@ void* serverWorker(void* arg)
     return NULL;
 }
 
-vector<string> split(string txt, char ch)
-{
-    size_t pos = txt.find(ch);
-    size_t initialPos = 0;
-    vector<string> strs;
-    
-    while(pos != string::npos) 
-    {
-        strs.push_back(txt.substr(initialPos, pos - initialPos));
-        initialPos = pos + 1;
-        pos = txt.find(ch, initialPos);
-    }
-
-    strs.push_back( txt.substr(initialPos, min(pos, txt.size()) - initialPos + 1));
-    return strs;
-}
-
-string addToList(string filename, string ip, int port)
+string addToList(string filename, string ip, int port, int filesize)
 {
     // Add this client to the list
     pthread_mutex_lock(&mappingMutex);
@@ -223,6 +207,10 @@ string addToList(string filename, string ip, int port)
     }
     if(response == "")
     {
+        if(filesize != 0)
+        {
+            filesizeMap[filename] = filesize;
+        }
         mapping[filename].push_back({ip, port});
         response = "Client details added to the list.";
     }
@@ -263,10 +251,10 @@ string getListOfFiles()
 {
 	// Get list of files
     pthread_mutex_lock(&mappingMutex);
-    string response = "List of available files:\n";
+    string response = "";
     for(auto map_iter = mapping.begin(); map_iter != mapping.end() ; ++map_iter)
     {
-        response += map_iter->first + "\n";
+        response += map_iter->first + fileListNameSizeDelimiter + to_string(filesizeMap[map_iter->first]) + "\n";
     }
     pthread_mutex_unlock(&mappingMutex);
     return response;

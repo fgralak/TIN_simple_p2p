@@ -8,11 +8,14 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <string.h>
+#include "constants.h"
 
 int createTCPSocket();
 void bindToPort(int, short);
 void closeSocket(int);
-const int BUFF_SIZE = (1 << 15);
+
+// Split string into parts
+std::vector<std::string> split(std::string, char);
 
 // Creates TCP Socket
 int createTCPSocket()
@@ -79,6 +82,23 @@ void closeSocket(int sockFD)
     // Close socket
     printf("Closing socket %d...\n", sockFD);
     close(sockFD);
+}
+
+std::vector<std::string> split(std::string txt, char ch)
+{
+    size_t pos = txt.find(ch);
+    size_t initialPos = 0;
+    std::vector<std::string> strs;
+    
+    while(pos != std::string::npos) 
+    {
+        strs.push_back(txt.substr(initialPos, pos - initialPos));
+        initialPos = pos + 1;
+        pos = txt.find(ch, initialPos);
+    }
+
+    strs.push_back( txt.substr(initialPos, std::min(pos, txt.size()) - initialPos + 1));
+    return strs;
 }
 
 #endif

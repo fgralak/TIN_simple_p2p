@@ -15,6 +15,7 @@
 #include "torrent_parser.h"
 #include "bencode_parser.h"
 #include "frame_definitions.h"
+#include "constants.h"
 
 
 using namespace std;
@@ -35,23 +36,14 @@ struct params_t {
 };
 
 
-const int CLIENT_QUEUED_LIMIT = 5;
-const int UPLOADER_COUNT = 1;
-const int DOWNLOADER_COUNT = 1;
-const string TRACKER_IP = "127.0.0.1";
-//const string TRACKER_PORT = "4500";
-static constexpr unsigned MAX_SEND_SIZE = 1024;
-
 int listenPort;
 std::string trackerPort;
 
 string resourceDirectory = "";
 
-// Split string into parts
-vector<string> split(string, char);
-
 // Create .torrent from file
 void createTorrentFile(string);
+void createTorrentFile(string name, int filesize);
 
 // Connect client to tracker
 string connectWithTracker(string, string);
@@ -309,26 +301,8 @@ int main(int argc, char* argv[])
     return 0;
 }
 
-vector<string> split(string txt, char ch)
-{
-    size_t pos = txt.find(ch);
-    size_t initialPos = 0;
-    vector<string> strs;
-    
-    while(pos != string::npos)
-    {
-        strs.push_back(txt.substr(initialPos, pos - initialPos));
-        initialPos = pos + 1;
-        pos = txt.find(ch, initialPos);
-    }
-
-    strs.push_back(txt.substr(initialPos, min(pos, txt.size()) - initialPos + 1));
-    return strs;
-}
-
 void createTorrentFile(string name)
 {
-
     ifstream file;
     string resourceName = name;
     if(resourceDirectory != "")
@@ -342,16 +316,23 @@ void createTorrentFile(string name)
     file.seekg(0, std::ios_base::beg);
     file.close();
 
-    vector<string>T = split(resourceName, '.');
+    createTorrentFile(name, filesize);
+}
+
+void createTorrentFile(string name, int filesize)
+{
+    vector<string>T = split(name, '.');
     string initname = T[0];
     initname += ".torrent";
+    if(resourceDirectory != "")
+    {
+        initname = resourceDirectory+"/"+initname;
+    }
     FILE* output = fopen(initname.c_str(), "w");
     fprintf(output,"announceip %s\n", TRACKER_IP.c_str());
     fprintf(output,"announceport %s\n", trackerPort.c_str());
     fprintf(output,"filename %s\n", name.c_str());
     fprintf(output,"filesize %d\n", filesize);
-    
-    fprintf(stderr, "Torrent File Generated \n");
     fclose(output);
 }
 
@@ -475,7 +456,39 @@ string getListFromTracker()
     }
 
     closeSocket(sockFD);
-    return trackerResponse;
+    
+    if(string(trackerResponse) == "empty")
+    {
+        return "No available files\n";
+    }
+    string filenameListToPrint = "List of available files:\n";
+    vector<string> listEntries = split(trackerResponse, '\n');
+    vector<string> fileinfo;
+    int filesize;
+    for(auto &entry : listEntries)
+    {
+        if(entry.size() <= 1)
+        {
+            continue;
+        }
+        fileinfo = split(entry, fileListNameSizeDelimiter);
+        if(fileinfo.size() != 2)
+        {
+            return "Could not read file info";
+        }
+        try
+        {
+            filesize = stoi(fileinfo[1]);
+        }
+        catch(const std::exception& e)
+        {
+            return "Error reading file size";
+        }
+        createTorrentFile(fileinfo[0], filesize);
+        filenameListToPrint += fileinfo[0] + "\n";
+    }
+
+    return filenameListToPrint;
 }
 
 
