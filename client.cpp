@@ -66,6 +66,9 @@ void* acceptTask(void*);
 // Creates a connection with tracker, returns socket
 int createConnection(string serverIp, int serverPort);
 
+// Connect to tracker if connect==true; Disconnect from tracker otherwise
+string switchConnectionToTracker(bool connect);
+
 int main(int argc, char* argv[])
 {
     // Check if arguments are valid
@@ -148,6 +151,7 @@ int main(int argc, char* argv[])
     pthread_create(&accepterThread, NULL, acceptTask,
                    (void*) &accepterThreadParams);
 
+    switchConnectionToTracker(true);
 
     while (true)
     {
@@ -258,6 +262,16 @@ int main(int argc, char* argv[])
                                                                 to_string(ServerNodeCode::NodeFileDisclaim));
                     printf("%s\n", trackerResponse.c_str());
                 }
+            }
+            else if (action == "connect")
+            {
+                string trackerResponse = switchConnectionToTracker(true);
+                printf("%s\n", trackerResponse.c_str());
+            }
+            else if (action == "disconnect")
+            {
+                string trackerResponse = switchConnectionToTracker(false);
+                printf("%s\n", trackerResponse.c_str());
             }
             else if (action == "list")
             {
@@ -671,3 +685,49 @@ void* acceptTask(void* arg)
     pthread_exit(NULL);
 }
 
+string switchConnectionToTracker(bool connect)
+{
+    int sockFD = createConnection(TRACKER_IP.c_str(), stoi(trackerPort));
+    string trackerRequest;
+    if(connect)
+    {
+        trackerRequest = to_string(ServerNodeCode::NodeConnect) + "$";
+    }
+    else
+    {
+        trackerRequest = to_string(ServerNodeCode::NodeDisconnect) + "$";
+    }
+    trackerRequest += "4:port";
+    trackerRequest += "i" + to_string(listenPort) + "e";
+
+    int requestLen = trackerRequest.size();
+    if(sendAll(sockFD, trackerRequest.c_str(), requestLen) == -1)
+    {
+        perror("sendall() failed");
+        printf("Only sent %d bytes\n", requestLen);
+    }
+
+    char trackerResponse[BUFF_SIZE];
+    memset(trackerResponse, 0, BUFF_SIZE);
+
+    int responseLen = recv(sockFD, trackerResponse, BUFF_SIZE, 0);
+    
+    // Receive failed for some reason
+    if(responseLen < 0)
+    {
+        perror("recv() failed");
+        closeSocket(sockFD);
+        return "";
+    }
+
+    // Connection closed by client
+    if(responseLen == 0)
+    {
+        printf("Tracker closed connection without responding\n");
+        closeSocket(sockFD);
+        return "";
+    }
+
+    closeSocket(sockFD);
+    return trackerResponse;
+}

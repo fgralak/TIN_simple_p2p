@@ -22,6 +22,9 @@ atomic <bool> terminateAllThreads;
 // Filename -> Vector (IP, Port)
 map < string, ClientList > mapping;
 
+// Clients that are currently disconnected
+ClientList clientsOffline;
+
 // Filename -> File size
 map <string, int > filesizeMap;
 
@@ -42,6 +45,13 @@ string getListOfFiles();
 
 // Get list of clients having this file
 ClientList getListOfClients(string);
+
+string disconnectClient(string ip, int port);
+
+string connectClient(string ip, int port);
+
+bool isClientDisconnected(string ip, int port);
+bool isAnyClientConnected(ClientList &clients);
 
 int main(int argc, char* argv[])
 {
@@ -161,9 +171,18 @@ void* serverWorker(void* arg)
         {
         	trackerResponse = getListOfFiles();
         }
-        else if(request[0] ==to_string(ServerNodeCode::NodeFileDownloaded)) {
+        else if(request[0] == to_string(ServerNodeCode::NodeFileDownloaded))
+        {
             addToList(bencodeParser.filename, inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
-         }
+        }
+        else if(request[0] == to_string(ServerNodeCode::NodeDisconnect))
+        {
+            trackerResponse = disconnectClient(inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
+        }
+        else if(request[0] == to_string(ServerNodeCode::NodeConnect))
+        {
+            trackerResponse = connectClient(inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
+        }
 
 
         if(trackerResponse == "")
@@ -189,29 +208,36 @@ string addToList(string filename, string ip, int port, int filesize)
     // Add this client to the list
     pthread_mutex_lock(&mappingMutex);
     string response = "";
-    for(auto map_iter = mapping.begin(); map_iter != mapping.end() ; ++map_iter)
+    if(isClientDisconnected(ip, port))
     {
-        if(map_iter->first == filename)
-        {
-            for(auto vec_iter = map_iter->second.begin(); vec_iter != map_iter->second.end(); ++vec_iter)
-            {
-                if(vec_iter->first == ip && vec_iter->second == port)
-                {
-                    response = "Client is already on the list.";
-                    break;
-                }
-            }
-            break;
-        }
+        response = "Client is currently disconnected";
     }
-    if(response == "")
+    else
     {
-        if(filesize != 0)
+        for(auto map_iter = mapping.begin(); map_iter != mapping.end() ; ++map_iter)
         {
-            filesizeMap[filename] = filesize;
+            if(map_iter->first == filename)
+            {
+                for(auto vec_iter = map_iter->second.begin(); vec_iter != map_iter->second.end(); ++vec_iter)
+                {
+                    if(vec_iter->first == ip && vec_iter->second == port)
+                    {
+                        response = "Client is already on the list.";
+                        break;
+                    }
+                }
+                break;
+            }
         }
-        mapping[filename].push_back({ip, port});
-        response = "Client details added to the list.";
+        if(response == "")
+        {
+            if(filesize != 0)
+            {
+                filesizeMap[filename] = filesize;
+            }
+            mapping[filename].push_back({ip, port});
+            response = "Client details added to the list.";
+        }
     }
     pthread_mutex_unlock(&mappingMutex);
     return response;
@@ -253,7 +279,10 @@ string getListOfFiles()
     string response = "";
     for(auto map_iter = mapping.begin(); map_iter != mapping.end() ; ++map_iter)
     {
-        response += map_iter->first + fileListNameSizeDelimiter + to_string(filesizeMap[map_iter->first]) + "\n";
+        if(isAnyClientConnected(map_iter->second))
+        {
+            response += map_iter->first + fileListNameSizeDelimiter + to_string(filesizeMap[map_iter->first]) + "\n";
+        }
     }
     pthread_mutex_unlock(&mappingMutex);
     return response;
@@ -262,7 +291,68 @@ string getListOfFiles()
 ClientList getListOfClients(string filename)
 {
     pthread_mutex_lock(&mappingMutex);
-    ClientList retVal(mapping[filename]);
+    ClientList retVal;
+    for(auto &client : mapping[filename])
+    {
+        if(!isClientDisconnected(client.first, client.second))
+        {
+            retVal.push_back(client);
+        }
+    }
     pthread_mutex_unlock(&mappingMutex);
     return retVal;
+}
+
+string disconnectClient(string ip, int port)
+{
+    for(auto &client : clientsOffline)
+    {
+        if(client.first == ip && client.second == port)
+        {
+            return "Client already disconnected";
+        }
+    }
+    clientsOffline.push_back(make_pair(ip, port));
+    return "Client disconnected";
+}
+
+string connectClient(string ip, int port)
+{
+    ClientList::iterator clientIt;
+    for(clientIt = clientsOffline.begin(); clientIt != clientsOffline.end(); ++clientIt)
+    {
+        if(clientIt->first == ip && clientIt->second == port)
+        {
+            break;
+        }
+    }
+    if(clientIt != clientsOffline.end())
+    {
+        clientsOffline.erase(clientIt);
+    }
+    return "Client connected";
+}
+
+bool isClientDisconnected(string ip, int port)
+{
+    for(auto &client : clientsOffline)
+    {
+        if(client.first == ip && client.second == port)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool isAnyClientConnected(ClientList &clients)
+{
+    for(auto &client : clients)
+    {
+        if(!isClientDisconnected(client.first, client.second))
+        {
+            return true;
+        }
+    }
+    return false;
 }
