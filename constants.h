@@ -2,6 +2,7 @@
 
 #include <string>
 
+const int CHUNK_SIZE = 100000;
 const int CLIENT_QUEUED_LIMIT = 5;
 const int UPLOADER_COUNT = 1;
 const int DOWNLOADER_COUNT = 1;
