@@ -39,10 +39,11 @@ const int CLIENT_QUEUED_LIMIT = 5;
 const int UPLOADER_COUNT = 1;
 const int DOWNLOADER_COUNT = 1;
 const string TRACKER_IP = "127.0.0.1";
-const string TRACKER_PORT = "4500";
+//const string TRACKER_PORT = "4500";
 static constexpr unsigned MAX_SEND_SIZE = 1024;
 
 int listenPort;
+std::string trackerPort;
 
 string resourceDirectory = "";
 
@@ -73,15 +74,15 @@ void* acceptTask(void*);
 int main(int argc, char* argv[])
 {
     // Check if arguments are valid
-    if(argc < 2)
+    if(argc < 3)
     {
-        printf("Usage: %s <Port>\n", argv[0]);
+        printf("Usage: %s <Listen port> <Tracker port> <Resource directory>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    if(argc > 2)
+    if(argc > 3)
     {
-        resourceDirectory = argv[2];
+        resourceDirectory = argv[3];
     }
     else
     {
@@ -89,6 +90,17 @@ int main(int argc, char* argv[])
     }
 
     listenPort = atoi(argv[1]);
+    trackerPort = argv[2];
+    try
+    {
+        stoi(trackerPort);
+    }
+    catch(const std::exception& e)
+    {
+        cout<<"Invalid tracker port. Usage: "<<argv[0]<<" <Listen port> <Tracker port> <Resource directory>"<<endl;
+        return 0;
+    }
+    
 
     // Create Listen Socket for upload threads to use
     int listenSocket = createTCPSocket();
@@ -335,7 +347,7 @@ void createTorrentFile(string name)
     initname += ".torrent";
     FILE* output = fopen(initname.c_str(), "w");
     fprintf(output,"announceip %s\n", TRACKER_IP.c_str());
-    fprintf(output,"announceport %s\n", TRACKER_PORT.c_str());
+    fprintf(output,"announceport %s\n", trackerPort.c_str());
     fprintf(output,"filename %s\n", name.c_str());
     fprintf(output,"filesize %d\n", filesize);
     
@@ -418,7 +430,7 @@ string getListFromTracker()
     memset(&serverAddr, 0, serverAddrLen);
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = inet_addr(TRACKER_IP.c_str());
-    serverAddr.sin_port = htons(stoi(TRACKER_PORT));
+    serverAddr.sin_port = htons(stoi(trackerPort));
 
     // Create a socket and connect to tracker
     int sockFD = createTCPSocket();
@@ -520,7 +532,8 @@ void* downloadThread(void* arg)
     std::string trackerResponse = (static_cast <std::string> (nArg->stringData));
     printf("%s\n", trackerResponse.c_str());
 
-    pthread_mutex_lock(&(*nArg).mutex);
+    //TODO this lock blocked the thread, even though it was the only one
+    //pthread_mutex_lock(&(*nArg).mutex);
 
     // Parse the tracker response
     BencodeParser bencodeParser(trackerResponse);
