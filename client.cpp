@@ -496,7 +496,7 @@ void* uploadThread(void* arg) {
     printf("Uploader Thread %lu created\n", pthread_self());
     params_t* nArg = &(*(params_t*)(arg));
     int clientSocket = nArg->intData;
-    string fileStr = TorrentParser(nArg->stringData).filename;
+    string fileStr = TorrentParser(nArg->stringData, resourceDirectory).filename;
     if(resourceDirectory != "")
     {
         fileStr = resourceDirectory+"/"+fileStr;
@@ -573,8 +573,8 @@ void* downloadThread(void* arg)
     printf("Connected to peer %s:%d\n", bencodeParser.peer_ip[0].c_str(), bencodeParser.peer_port[0]);
     std::string peerRequest = nArg->stringData1;
 
-    auto size = TorrentParser(peerRequest).filesize;
-    auto fName = TorrentParser(peerRequest).filename;
+    auto size = TorrentParser(peerRequest, resourceDirectory).filesize;
+    auto fName = TorrentParser(peerRequest, resourceDirectory).filename;
     auto resourceFilename = fName;
     if(resourceDirectory != "")
     {
@@ -635,7 +635,7 @@ void* downloadThread(void* arg)
     }
 
 
-    printf("Downloaded file %s\n", fName);
+    printf("Downloaded file %s\n", fName.c_str());
     connectWithTracker(peerRequest, to_string(ServerNodeCode::NodeFileDownloaded));
     closeSocket(sockFD);
 

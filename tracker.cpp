@@ -132,7 +132,6 @@ void* serverWorker(void* arg)
 
         if(request[0] != to_string(ServerNodeCode::NodeFileListRequest))
         {
-	        printf("%s\n", request[1]);
 	        bencodeParser.print_details();
 	    }
 

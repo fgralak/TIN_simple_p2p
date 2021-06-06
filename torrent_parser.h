@@ -34,7 +34,7 @@ public:
         ifstream fileIn(resourceFilename);
         if(!fileIn.is_open())
         {
-            printf("Couldn't open file %s\n", torrentfile);
+            printf("Couldn't open file %s\n", torrentfile.c_str());
             return;
         }
 
