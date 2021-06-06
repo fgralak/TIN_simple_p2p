@@ -6,6 +6,9 @@ tracker
 res1
 res2
 
+# IDE specific
+.vscode
+
 # Prerequisites
 *.d
 
