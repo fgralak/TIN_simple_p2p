@@ -187,10 +187,18 @@ void* serverWorker(void *arg)
 
             if (request[0] == to_string(ServerNodeCode::NodeNewFileAdded))
             {
-                trackerResponse = addToList(bencodeParser.filename,
+                auto element = mapping.find(bencodeParser.filename);
+                if(element != mapping.end())
+                {
+                    trackerResponse = "File with the same name already exists in the network";
+                }
+                else
+                {
+                    trackerResponse = addToList(bencodeParser.filename,
                                             inet_ntoa(clientAddr.sin_addr),
                                             bencodeParser.port,
                                             bencodeParser.filesize);
+                }
             }
             else if (request[0]
                     == to_string(ServerNodeCode::NodeOwnerListRequest))
