@@ -178,7 +178,7 @@ std::string getListOfFilesInDir(std::string dirPath)
             TorrentParser torrentParser(filepath);
 
 
-        ret += p.path().filename();
+        ret += torrentParser.filename;
         ret += "$";
         ret += std::to_string(torrentParser.filesize);
         ret += "$";

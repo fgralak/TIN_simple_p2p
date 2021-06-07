@@ -162,17 +162,20 @@ int main(int argc, char* argv[])
         {
             pthread_join(accepterThread, NULL);
 
-            if(accepterThreadParams.stringData1 != trackerIP){
-
-                uploadingParams[currUploaderCount] = accepterThreadParams;
-                pthread_create(&uploadThreadID[currUploaderCount], NULL, uploadThread,
-                                       (void*) &uploadingParams[currUploaderCount]);
-                currUploaderCount++;
-            }
-            else
+            if(accepterThreadParams.intData != listenSocket)
             {
-                string listOfFiles = getListOfFilesInDir(resourceDirectory);
-                sendFileList(listOfFiles, accepterThreadParams);
+                if(accepterThreadParams.stringData.substr(0, 3) == "140")
+                {
+                    string listOfFiles = getListOfFilesInDir(resourceDirectory);
+                    sendFileList(listOfFiles, accepterThreadParams);
+                }
+                else
+                {
+                    uploadingParams[currUploaderCount] = accepterThreadParams;
+                    pthread_create(&uploadThreadID[currUploaderCount], NULL, uploadThread,
+                                           (void*) &uploadingParams[currUploaderCount]);
+                    currUploaderCount++;
+                }
             }
 
             gotSocket = accepterThreadParams.intData;
@@ -811,7 +814,7 @@ void* acceptTask(void* arg)
 
     unsigned int chunkId = 0;
     int idToRead = 0;
-    // ugly workaround to build chunk id
+
     if(clientRequest[0] == 'i') {
         idToRead = 1;
         while(clientRequest[idToRead] != 'e') {
@@ -942,4 +945,5 @@ void sendFileList(string &msg, params_t &arg)
     }
 
     closeSocket(sockFD);
+    pthread_mutex_unlock(&(arg).mutex);
 }

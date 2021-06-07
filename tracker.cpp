@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <atomic>
 #include <map>
+#include <set>
 #include <vector>
 #include "helper_functions.h"
 #include "bencode_parser.h"
@@ -12,8 +13,6 @@
 #include "constants.h"
 
 using namespace std;
-
-static constexpr double REFRESH_TIME_S {30.0};
 
 // Type alias for vector of ip, port pairs
 using ClientList = vector <pair<string, int>>;
@@ -425,7 +424,7 @@ bool isAnyClientConnected(ClientList &clients)
 void refreshClientFiles()
 {
     pthread_mutex_lock(&mappingMutex);
-    map <string, int> clientMap;
+    set <pair<string, int>> clientMap;
 
 
 
