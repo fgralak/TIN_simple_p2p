@@ -1,3 +1,15 @@
+# Execs
+client
+tracker
+
+# Resource directories
+res1
+res2
+res3
+
+# IDE specific
+.vscode
+
 # Prerequisites
 *.d
 
