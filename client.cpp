@@ -11,44 +11,34 @@
 #include <limits>
 #include <charconv>
 #include <fstream>
+#include <algorithm>
+#include <queue>
+#include <map>
 #include "helper_functions.h"
 #include "torrent_parser.h"
 #include "bencode_parser.h"
 #include "frame_definitions.h"
+#include "constants.h"
 
 
 using namespace std;
 
 
-struct params_t {
-        pthread_mutex_t mutex;
-        bool done = false;
-        int intData;
-        string stringData;
-        string stringData1;
 
-        params_t()
-        {
-            stringData.reserve(64);
-            stringData1.reserve(64);
-        }
-};
-
-
-const int CLIENT_QUEUED_LIMIT = 5;
-const int UPLOADER_COUNT = 1;
-const int DOWNLOADER_COUNT = 1;
-const string TRACKER_IP = "127.0.0.1";
-const string TRACKER_PORT = "4500";
-static constexpr unsigned MAX_SEND_SIZE = 1024;
 
 int listenPort;
+std::string trackerPort;
+std::string trackerIP = "";
+string resourceDirectory = "";
 
-// Split string into parts
-vector<string> split(string, char);
+// Create download threads
+unsigned currDownloaderCount = 0;
+pthread_t downloadThreadID[DOWNLOADER_COUNT];
+array<params_t, DOWNLOADER_COUNT> downloadingParams;
 
 // Create .torrent from file
 void createTorrentFile(string);
+void createTorrentFile(string name, int filesize);
 
 // Connect client to tracker
 string connectWithTracker(string, string);
@@ -59,6 +49,9 @@ string getListFromTracker();
 // Basic upload thread
 void* uploadThread(void*);
 
+// Thread managing the download
+void* downloadManagerThread(void*);
+
 // Basic download thread
 void* downloadThread(void*);
 
@@ -68,16 +61,47 @@ void* ioTask(void*);
 // accepting task
 void* acceptTask(void*);
 
+// Creates a connection with tracker, returns socket
+int createConnection(string serverIp, int serverPort);
+
+// Connect to tracker if connect==true; Disconnect from tracker otherwise
+string switchConnectionToTracker(bool connect);
+
 int main(int argc, char* argv[])
 {
+    srand(time(NULL));
     // Check if arguments are valid
-    if(argc < 2)
+    if(argc < 3)
     {
-        printf("Usage: %s <Port>\n", argv[0]);
+        printf("Usage: %s <Listen port> <Tracker port> <Tracker IP> <Resource directory>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
+    if(argc > 4)
+    {
+        resourceDirectory = argv[4];
+    }
+    else
+    {
+        resourceDirectory = "";
+    }
+    if(argc > 3)
+    {
+        trackerIP = argv[3];
+    }
+
     listenPort = atoi(argv[1]);
+    trackerPort = argv[2];
+    try
+    {
+        stoi(trackerPort);
+    }
+    catch(const std::exception& e)
+    {
+        cout<<"Invalid tracker port. Usage: "<<argv[0]<<" <Listen port> <Tracker port> <Tracker IP> <Resource directory>"<<endl;
+        return 0;
+    }
+    
 
     // Create Listen Socket for upload threads to use
     int listenSocket = createTCPSocket();
@@ -91,9 +115,6 @@ int main(int argc, char* argv[])
 
     // Create upload threads
     pthread_t uploadThreadID[UPLOADER_COUNT];
-    
-    // Create download threads
-    pthread_t downloadThreadID[DOWNLOADER_COUNT];
 
     // Create IO thread
     pthread_t ioThread;
@@ -103,10 +124,8 @@ int main(int argc, char* argv[])
     pthread_t accepterThread;
     params_t accepterThreadParams;
 
-
     array<params_t, UPLOADER_COUNT> uploadingParams;
-    array<params_t, DOWNLOADER_COUNT> downloadingParams;
-    unsigned currDownloaderCount = 0;
+    
     unsigned currUploaderCount = 0;
     for (auto &uploader : uploadingParams)
     {
@@ -130,6 +149,7 @@ int main(int argc, char* argv[])
     pthread_create(&accepterThread, NULL, acceptTask,
                    (void*) &accepterThreadParams);
 
+    switchConnectionToTracker(true);
 
     while (true)
     {
@@ -211,20 +231,19 @@ int main(int argc, char* argv[])
                     }
                     else
                     {
-                        vector<string> peers = split(trackerResponse, '$');
-                        int numberOfPeers = peers.size() - 1;
-
-                        for (int i = currDownloaderCount;
-                                i < DOWNLOADER_COUNT && i < numberOfPeers
-                                && currDownloaderCount < DOWNLOADER_COUNT; i++)
-                        {
-                            downloadingParams[i].stringData = peers[i];
-                            downloadingParams[i].stringData1 = argument[1];
-                            pthread_create(&downloadThreadID[i], NULL,
-                                           downloadThread,
-                                           (void*) &downloadingParams[i]);
-                            currDownloaderCount++;
-                        }
+                        unsigned int threadId = getFirstFreeThread(
+                            downloadThreadID, downloadingParams);
+                        downloadingParams[threadId].stringData = 
+                            trackerResponse;
+                        downloadingParams[threadId].stringData1 = 
+                            argument[1];
+                        downloadingParams[threadId].threadId = 
+                            threadId;
+                        pthread_create(&downloadThreadID[threadId], 
+                            NULL, downloadManagerThread, 
+                            (void*) &downloadingParams[threadId]);
+                        pthread_detach(downloadThreadID[threadId]);
+                        currDownloaderCount++;
                     }
                 }
             }
@@ -241,6 +260,16 @@ int main(int argc, char* argv[])
                     printf("%s\n", trackerResponse.c_str());
                 }
             }
+            else if (action == "connect")
+            {
+                string trackerResponse = switchConnectionToTracker(true);
+                printf("%s\n", trackerResponse.c_str());
+            }
+            else if (action == "disconnect")
+            {
+                string trackerResponse = switchConnectionToTracker(false);
+                printf("%s\n", trackerResponse.c_str());
+            }
             else if (action == "list")
             {
                 string trackerResponse = getListFromTracker();
@@ -248,22 +277,13 @@ int main(int argc, char* argv[])
             }
             else
             {
-                printf("Unnkown command!\n");
+                printf("Unknown command!\n");
             }
         }
 
 
 
         // join joinable
-        for (int i = 0; i < DOWNLOADER_COUNT; i++)
-        {
-            if (downloadingParams[i].done == true)
-            {
-                downloadingParams[i].done = false;
-                pthread_join(downloadThreadID[i], NULL);
-                currDownloaderCount--;
-            }
-        }
         for (int i = 0; i < UPLOADER_COUNT; i++)
         {
             if (uploadingParams[i].done == true)
@@ -286,71 +306,69 @@ int main(int argc, char* argv[])
     return 0;
 }
 
-vector<string> split(string txt, char ch)
-{
-    size_t pos = txt.find(ch);
-    size_t initialPos = 0;
-    vector<string> strs;
-    
-    while(pos != string::npos)
-    {
-        strs.push_back(txt.substr(initialPos, pos - initialPos));
-        initialPos = pos + 1;
-        pos = txt.find(ch, initialPos);
-    }
-
-    strs.push_back(txt.substr(initialPos, min(pos, txt.size()) - initialPos + 1));
-    return strs;
-}
-
 void createTorrentFile(string name)
 {
-
     ifstream file;
-    file.open(name, ios::in | ios::binary);
+    string resourceName = name;
+    if(resourceDirectory != "")
+    {
+        resourceName = resourceDirectory+"/"+name;
+    }
+    file.open(resourceName, ios::in | ios::binary);
     file.ignore(numeric_limits<streamsize>::max());
     streamsize filesize = file.gcount();
     file.clear();   //  Since ignore will have set eof.
     file.seekg(0, std::ios_base::beg);
     file.close();
 
+    createTorrentFile(name, filesize);
+}
+
+void createTorrentFile(string name, int filesize)
+{
     vector<string>T = split(name, '.');
     string initname = T[0];
-    initname += ".torrent"; 
+    initname += ".torrent";
+    if(resourceDirectory != "")
+    {
+        initname = resourceDirectory+"/"+initname;
+    }
     FILE* output = fopen(initname.c_str(), "w");
-    fprintf(output,"announceip %s\n", TRACKER_IP.c_str());
-    fprintf(output,"announceport %s\n", TRACKER_PORT.c_str());
+    fprintf(output,"announceip %s\n", trackerIP.c_str());
+    fprintf(output,"announceport %s\n", trackerPort.c_str());
     fprintf(output,"filename %s\n", name.c_str());
     fprintf(output,"filesize %d\n", filesize);
-    
-    fprintf(stderr, "Torrent File Generated \n");
     fclose(output);
 }
 
-string connectWithTracker(string torrentfile, string msg)
+int createConnection(string ip, int port)
 {
-    // Parse .torrent file
-    TorrentParser torrentParser(torrentfile);
-
     // Server address
     sockaddr_in serverAddr;
     unsigned serverAddrLen = sizeof(serverAddr);
     memset(&serverAddr, 0, serverAddrLen);
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr(torrentParser.trackerIP.c_str());
-    serverAddr.sin_port = htons(torrentParser.trackerPort);
+    serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());
+    serverAddr.sin_port = htons(port);
 
     // Create a socket and connect to tracker
     int sockFD = createTCPSocket();	
     int connectRetVal = connect(sockFD, (sockaddr*) &serverAddr, serverAddrLen);
     if(connectRetVal < 0)
     {
-        perror("connect() to tracker");
+        string errorMsg = "connect() to "+ip+":"+to_string(port);
+        perror(errorMsg.c_str());
         closeSocket(sockFD);
         exit(EXIT_FAILURE);
     }
+    printf("Created connection with %s:%d\n", ip.c_str(), port);
+    return sockFD;
+}
 
-    printf("Connected to tracker\n");
+string connectWithTracker(string torrentfile, string msg)
+{
+    TorrentParser torrentParser(torrentfile, resourceDirectory);
+    int sockFD = createConnection(torrentParser.trackerIP, torrentParser.trackerPort);
 
     string trackerRequest = msg + "$";
     trackerRequest += "8:filename";
@@ -396,25 +414,7 @@ string connectWithTracker(string torrentfile, string msg)
 
 string getListFromTracker()
 {
-    // Server address
-    sockaddr_in serverAddr;
-    unsigned serverAddrLen = sizeof(serverAddr);
-    memset(&serverAddr, 0, serverAddrLen);
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr(TRACKER_IP.c_str());
-    serverAddr.sin_port = htons(stoi(TRACKER_PORT));
-
-    // Create a socket and connect to tracker
-    int sockFD = createTCPSocket();
-    int connectRetVal = connect(sockFD, (sockaddr*) &serverAddr, serverAddrLen);
-    if(connectRetVal < 0)
-    {
-        perror("connect() to tracker");
-        closeSocket(sockFD);
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Connected to tracker\n");
+    int sockFD = createConnection(trackerIP.c_str(), stoi(trackerPort));
 
     string trackerRequest = to_string(ServerNodeCode::NodeFileListRequest) + "$";
 
@@ -447,7 +447,39 @@ string getListFromTracker()
     }
 
     closeSocket(sockFD);
-    return trackerResponse;
+    
+    if(string(trackerResponse) == "empty")
+    {
+        return "No available files\n";
+    }
+    string filenameListToPrint = "List of available files:\n";
+    vector<string> listEntries = split(trackerResponse, '\n');
+    vector<string> fileinfo;
+    int filesize;
+    for(auto &entry : listEntries)
+    {
+        if(entry.size() <= 1)
+        {
+            continue;
+        }
+        fileinfo = split(entry, fileListNameSizeDelimiter);
+        if(fileinfo.size() != 2)
+        {
+            return "Could not read file info";
+        }
+        try
+        {
+            filesize = stoi(fileinfo[1]);
+        }
+        catch(const std::exception& e)
+        {
+            return "Error reading file size";
+        }
+        createTorrentFile(fileinfo[0], filesize);
+        filenameListToPrint += fileinfo[0] + "\n";
+    }
+
+    return filenameListToPrint;
 }
 
 
@@ -455,15 +487,19 @@ void* uploadThread(void* arg) {
     printf("Uploader Thread %lu created\n", pthread_self());
     params_t* nArg = &(*(params_t*)(arg));
     int clientSocket = nArg->intData;
-    string fileStr = TorrentParser(nArg->stringData).filename;
+    unsigned int chunkdId = nArg->chunkId;
+    string fileStr = TorrentParser(nArg->stringData, resourceDirectory).filename;
+    if(resourceDirectory != "")
+    {
+        fileStr = resourceDirectory+"/"+fileStr;
+    }
 
-    
+
     if( access( fileStr.c_str(), F_OK ) != 0 ) {
         // file doesnt exist
-        int responseLen = sizeof(NodeNodeCode::NoSuchFile);
-        char buf[responseLen] = {0};
-        std::to_chars(buf, buf+responseLen, NodeNodeCode::NoSuchFile);
-        if(sendAll(clientSocket, buf, responseLen) != 0)
+        string str = to_string(NodeNodeCode::NoSuchFile);
+        int len =  str.length();
+        if(sendAll(clientSocket, str.c_str(), len) != 0)
         {
             perror("file doesnt exist");
         }
@@ -477,62 +513,204 @@ void* uploadThread(void* arg) {
     file.ignore(numeric_limits<streamsize>::max());
     streamsize length = file.gcount();
     file.clear();   //  Since ignore will have set eof.
-    file.seekg(0, std::ios_base::beg);
+    file.seekg(chunkdId * CHUNK_SIZE, std::ios_base::beg);
 
     char buffer[MAX_SEND_SIZE] = {0};
 
-    int i =length;
+    int i = getChunkSize(length, chunkdId);
+    // printf("Chunk id: %d, to read count: %d\n", chunkdId, i);
     while(i!=0)
     {
         int sendSize = min(i, (int)MAX_SEND_SIZE);
         if(!file.read(buffer, sendSize)) {printf("senderror");}
         int sl = send(clientSocket, buffer, sendSize, 0);
+        // printf("Send %d bytes\n", sl);
         i -= sl;
     }
     file.close();
     closeSocket(clientSocket);
+    printf("Upload of chunk %d done\n", chunkdId);
     return NULL;
 }
+
+
+
+void* downloadManagerThread(void* arg)
+{
+    params_t* nArg = &(*(params_t*)(arg));
+    downloadingParams[nArg->threadId].isFree = false;
+    vector<string> peers = split(nArg->stringData, '$');
+    // for(unsigned int i = 0; i < peers.size() - 1; ++i)
+    //     printf("Peer %d: %s\n", i, peers[i].c_str());
+    int numberOfPeers = peers.size() - 1;
+
+    std::string peerRequest = nArg->stringData1;
+    auto size = TorrentParser(peerRequest, resourceDirectory).filesize;
+    auto fName = TorrentParser(peerRequest, resourceDirectory).filename;
+    auto resourceFilename = fName;
+    if(resourceDirectory != "")
+        resourceFilename = resourceDirectory+"/"+fName;
+
+    ofstream file(resourceFilename);
+    if(!file.is_open()) {
+        printf("downloaded file creation error\n");
+        exit(EXIT_FAILURE);
+    }
+    // printf("Resource filename: %s\n", resourceFilename.c_str());
+
+    // get number of chunks
+    unsigned int nChunks = size / CHUNK_SIZE;
+    if(size % CHUNK_SIZE)
+        ++nChunks;
+
+    std::vector<bool> isDownloading(nChunks, false);
+    std::vector<bool> isDownloaded(nChunks, false);
+    std::queue<unsigned int> childThreadIds;
+    std::map<unsigned int, unsigned int> childThreadIdToChunkIdMap;
+    
+    bool done = false;
+    int iterationCounter = 0;
+    // initial start of threads
+    while(currDownloaderCount < DOWNLOADER_COUNT) {
+        unsigned int chunkId = getFirstNotDownloaded(isDownloading);
+        
+        // find free thread
+        unsigned int threadId = getFirstFreeThread(downloadThreadID, 
+            downloadingParams);
+                
+        // printf("Initial thread start: Chunk id: %d\n", chunkId);
+        if(chunkId == nChunks) {
+            // printf("Breaking out of the loop\n");
+            break;
+        }
+        childThreadIds.push(threadId);
+        childThreadIdToChunkIdMap[threadId] = chunkId;
+        // printf("Added chunk id %d to loop, thread no. %d\n", chunkId, 
+        //     threadId);
+        isDownloading[chunkId] = true;
+
+        downloadingParams[threadId].stringData = 
+            peers[random() % numberOfPeers];
+        downloadingParams[threadId].stringData1 = nArg->stringData1;
+        downloadingParams[threadId].chunkId = chunkId;
+        pthread_create(&downloadThreadID[threadId], 
+            NULL, downloadThread, 
+            (void*) &downloadingParams[threadId]);
+        currDownloaderCount++;
+    }    
+
+    while(!done) {
+        // printf("Looping...\n");
+        // wait for one thread
+        if(!childThreadIds.empty()) {
+            void* returnedValue;
+            // printf("Joining %d\n", 
+            //     childThreadIdToChunkIdMap[childThreadIds.front()]);
+            pthread_join(downloadThreadID[childThreadIds.front()], 
+                &returnedValue);
+            --currDownloaderCount;
+            unsigned int resultChunkId = 
+                childThreadIdToChunkIdMap[childThreadIds.front()];
+            childThreadIds.pop();
+
+            if(!returnedValue) {
+                // download not successful
+                isDownloading[resultChunkId] = false;
+                // printf("Download failed: %d\nDownloading: %d, downloaded: %d\n", 
+                    // resultChunkId, getFirstNotDownloaded(isDownloading), 
+                    // getFirstNotDownloaded(isDownloaded));
+            }
+            else {
+                // update file
+                isDownloaded[resultChunkId] = true;
+                char* returnedString = (char*)returnedValue;
+                file.seekp(resultChunkId * CHUNK_SIZE);
+                file.write(returnedString, getChunkSize(size, resultChunkId));    
+            //     printf("Download successful: %d\nDownloading: %d, downloaded: %d\n", 
+            //         resultChunkId, getFirstNotDownloaded(isDownloading), 
+            //         getFirstNotDownloaded(isDownloaded));
+            }
+        }
+        
+        
+        // start another thread if necessary and possible
+        unsigned int chunkId = getFirstNotDownloaded(isDownloading);
+        if(chunkId != nChunks && currDownloaderCount < DOWNLOADER_COUNT) {
+            unsigned int threadId = getFirstFreeThread(downloadThreadID, 
+                downloadingParams);
+            // printf("Latter thread start: Chunk id: %d\n", chunkId);
+            childThreadIds.push(threadId);
+            childThreadIdToChunkIdMap[threadId] = chunkId;
+            // printf("Added chunk id %d to loop, thread no. %d\n", chunkId, 
+                // threadId);
+            isDownloading[chunkId] = true;
+
+            downloadingParams[threadId].stringData = 
+                peers[random() % numberOfPeers];
+            downloadingParams[threadId].stringData1 = 
+                nArg->stringData1;
+            downloadingParams[threadId].chunkId = chunkId;
+
+            pthread_create(&downloadThreadID[threadId], 
+                NULL, downloadThread, 
+                (void*) &downloadingParams[threadId]);
+            currDownloaderCount++;
+        }
+
+        // check if whole download complete
+        if(nChunks == getFirstNotDownloaded(isDownloaded))
+            done = true;
+        
+        // workaround
+        if(iterationCounter == DOWNLOAD_FAIL_LEVEL)
+            break;
+        ++iterationCounter;
+    }
+
+    file.close();
+
+    printf("Downloaded file %s\n", fName.c_str());
+    connectWithTracker(peerRequest, 
+        to_string(ServerNodeCode::NodeFileDownloaded));
+
+    --currDownloaderCount;
+    downloadingParams[nArg->threadId].done = true;
+    downloadingParams[nArg->threadId].isFree = true;
+    return NULL;
+}
+
 
 void* downloadThread(void* arg)
 {
     printf("Downloader Thread %lu created\n", pthread_self());
     params_t* nArg = &(*(params_t*)(arg));
     std::string trackerResponse = (static_cast <std::string> (nArg->stringData));
-    printf("%s\n", trackerResponse.c_str());
+    // printf("%s\n", trackerResponse.c_str());
 
-    pthread_mutex_lock(&(*nArg).mutex);
+    //TODO this lock blocked the thread, even though it was the only one
+    //pthread_mutex_lock(&(*nArg).mutex);
 
     // Parse the tracker response
     BencodeParser bencodeParser(trackerResponse);
 
-    // Peer address
-    sockaddr_in peerAddr;
-    unsigned peerAddrLen = sizeof(peerAddr);
-    memset(&peerAddr, 0, peerAddrLen);
-    peerAddr.sin_family = AF_INET;
-    peerAddr.sin_addr.s_addr = inet_addr(bencodeParser.peer_ip[0].c_str());
-    peerAddr.sin_port = htons(bencodeParser.peer_port[0]);
+    int sockFD = createConnection(bencodeParser.peer_ip[0], bencodeParser.peer_port[0]);
 
-    // Create a socket and connect to the peer
-    int sockFD = createTCPSocket();
-    int connectRetVal = connect(sockFD, (sockaddr*) &peerAddr, peerAddrLen);
-    if(connectRetVal < 0)
-    {
-        perror("connect() to peer");
-        closeSocket(sockFD);
-        exit(EXIT_FAILURE);
-    }
-
-    // Send request to connected peer
+    // Send request to connected peer, specify chunk id
     printf("Connected to peer %s:%d\n", bencodeParser.peer_ip[0].c_str(), bencodeParser.peer_port[0]);
     std::string peerRequest = nArg->stringData1;
+    std::string peerRequestWithChunkId = std::string("i") + 
+        std::to_string(nArg->chunkId) + std::string("e") + nArg->stringData1;
 
-    auto size = TorrentParser(peerRequest).filesize;
-    auto fName = TorrentParser(peerRequest).filename;
+    auto size = TorrentParser(peerRequest, resourceDirectory).filesize;
+    auto fName = TorrentParser(peerRequest, resourceDirectory).filename;
+    auto resourceFilename = fName;
+    if(resourceDirectory != "")
+    {
+        resourceFilename = resourceDirectory+"/"+fName;
+    }
 
-    int requestLen = peerRequest.size();
-    if(sendAll(sockFD, peerRequest.c_str(), requestLen) != 0)
+    int requestLen = peerRequestWithChunkId.size();
+    if(sendAll(sockFD, peerRequestWithChunkId.c_str(), requestLen) != 0)
     {
         perror("sendAll() failed");
         printf("Only sent %d bytes\n", requestLen);
@@ -540,15 +718,20 @@ void* downloadThread(void* arg)
 
     char peerResponse[BUFF_SIZE] = {0};
 
-    int i = size;
+    int i = getChunkSize(size, nArg->chunkId);
     int responseLen = 0;
     int toRecieve = min(size, (int)MAX_SEND_SIZE);
     responseLen = recv(sockFD, peerResponse, toRecieve, 0);
     i -= responseLen;
     string checkNoFile = string(peerResponse).substr(0, 3);
+    
+    // string to collect data
+    string receivedData;
+
     if (checkNoFile == to_string(NodeNodeCode::NoSuchFile))
     {
         // handle no file
+        return NULL;
     }
     else if (responseLen < 0)
     {
@@ -565,33 +748,25 @@ void* downloadThread(void* arg)
     }
     else
     {
-        ofstream file(fName);
-        if (file.is_open())
+        for(int j = 0; j < responseLen; ++j)
+            receivedData += peerResponse[j];
+        while (i > 0)
         {
-            file.write(peerResponse, responseLen);
-            while (i > 0)
-            {
-                toRecieve = min(i, (int)MAX_SEND_SIZE);
-                responseLen = recvfrom(sockFD, peerResponse, toRecieve, 0, NULL, NULL);
-                file.write(peerResponse, responseLen);
-                i -= responseLen;
-            }
-        file.close();
-        }
-        else
-        {
-            printf("downloaded file creation error");
+            toRecieve = min(i, (int)MAX_SEND_SIZE);
+            responseLen = recvfrom(sockFD, peerResponse, toRecieve, 0, NULL, NULL);
+            for(int j = 0; j < responseLen; ++j)
+                receivedData += peerResponse[j];
+            i -= responseLen;
         }
     }
 
 
-    printf("Downloaded file %s\n", fName);
-    connectWithTracker(peerRequest, to_string(ServerNodeCode::NodeFileDownloaded));
     closeSocket(sockFD);
 
     pthread_mutex_unlock(&(*(params_t*)(arg)).mutex);
     (*(params_t*)(arg)).done = true;
-    return NULL;
+    (*(params_t*)(arg)).isFree = true;
+    return (void*)receivedData.c_str();
 }
 
 void* ioTask(void* arg)
@@ -628,6 +803,19 @@ void* acceptTask(void* arg)
 
     int requestMsgLen = recv(clientSocket, clientRequest, bufSize, 0);
 
+    unsigned int chunkId = 0;
+    int idToRead = 0;
+    // ugly workaround to build chunk id
+    if(clientRequest[0] == 'i') {
+        idToRead = 1;
+        while(clientRequest[idToRead] != 'e') {
+            chunkId = chunkId * 10 + (clientRequest[idToRead] - '0');
+            ++idToRead;
+        }
+        // move to first valid position
+        ++idToRead;
+    }
+
     if(requestMsgLen < 0)
     {
         perror("recv() failed");
@@ -641,10 +829,57 @@ void* acceptTask(void* arg)
         closeSocket(clientSocket);
     }
 
-    nArg->stringData = string(clientRequest);
+    nArg->stringData = string(clientRequest).substr(idToRead);
     nArg->intData = clientSocket;
+    nArg->chunkId = chunkId;
     nArg->done = true;
     pthread_mutex_unlock(&(*nArg).mutex);
     pthread_exit(NULL);
 }
 
+string switchConnectionToTracker(bool connect)
+{
+    int sockFD = createConnection(trackerIP.c_str(), stoi(trackerPort));
+    string trackerRequest;
+    if(connect)
+    {
+        trackerRequest = to_string(ServerNodeCode::NodeConnect) + "$";
+    }
+    else
+    {
+        trackerRequest = to_string(ServerNodeCode::NodeDisconnect) + "$";
+    }
+    trackerRequest += "4:port";
+    trackerRequest += "i" + to_string(listenPort) + "e";
+
+    int requestLen = trackerRequest.size();
+    if(sendAll(sockFD, trackerRequest.c_str(), requestLen) == -1)
+    {
+        perror("sendall() failed");
+        printf("Only sent %d bytes\n", requestLen);
+    }
+
+    char trackerResponse[BUFF_SIZE];
+    memset(trackerResponse, 0, BUFF_SIZE);
+
+    int responseLen = recv(sockFD, trackerResponse, BUFF_SIZE, 0);
+    
+    // Receive failed for some reason
+    if(responseLen < 0)
+    {
+        perror("recv() failed");
+        closeSocket(sockFD);
+        return "";
+    }
+
+    // Connection closed by client
+    if(responseLen == 0)
+    {
+        printf("Tracker closed connection without responding\n");
+        closeSocket(sockFD);
+        return "";
+    }
+
+    closeSocket(sockFD);
+    return trackerResponse;
+}

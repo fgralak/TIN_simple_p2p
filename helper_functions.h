@@ -8,11 +8,36 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <string.h>
+#include <array>
+#include <string>
+#include "constants.h"
+
+
+struct params_t {
+    pthread_mutex_t mutex;
+    bool done = false;
+    bool isFree = true;
+    int intData;
+    std::string stringData;
+    std::string stringData1;
+    unsigned int chunkId;
+    unsigned int threadId;
+
+    params_t()
+    {
+        stringData.reserve(1024);
+        stringData1.reserve(1024);
+    }
+};
+
+
 
 int createTCPSocket();
 void bindToPort(int, short);
 void closeSocket(int);
-const int BUFF_SIZE = (1 << 15);
+
+// Split string into parts
+std::vector<std::string> split(std::string, char);
 
 // Creates TCP Socket
 int createTCPSocket()
@@ -79,6 +104,56 @@ void closeSocket(int sockFD)
     // Close socket
     printf("Closing socket %d...\n", sockFD);
     close(sockFD);
+}
+
+std::vector<std::string> split(std::string txt, char ch)
+{
+    size_t pos = txt.find(ch);
+    size_t initialPos = 0;
+    std::vector<std::string> strs;
+    
+    while(pos != std::string::npos) 
+    {
+        strs.push_back(txt.substr(initialPos, pos - initialPos));
+        initialPos = pos + 1;
+        pos = txt.find(ch, initialPos);
+    }
+
+    strs.push_back( txt.substr(initialPos, std::min(pos, txt.size()) - initialPos + 1));
+    return strs;
+}
+
+
+
+unsigned int getFirstNotDownloaded(std::vector<bool> isDownloaded) {
+    for(unsigned int i = 0; i < isDownloaded.size(); ++i)
+        if(!isDownloaded[i])
+            return i;
+    return isDownloaded.size();
+}
+
+unsigned int getChunkSize(unsigned int totalSize, unsigned int chunkId) {
+    unsigned int nChunks = totalSize / CHUNK_SIZE;
+    if(totalSize % CHUNK_SIZE)
+        ++nChunks;
+    if(chunkId == nChunks - 1)
+        return totalSize % CHUNK_SIZE;
+    return CHUNK_SIZE;
+}
+
+unsigned int getFirstFreeThread(pthread_t* threadArray, 
+    std::array<params_t, DOWNLOADER_COUNT>& threadParams) {
+    
+    int threadId = -1;
+    for(int i = 0; i < DOWNLOADER_COUNT; ++i) {
+        if(threadParams[i].isFree) {
+            threadParams[i].isFree = false;
+            return (unsigned int)i;
+        }
+    }
+    
+    perror("Could not find a free thread even though thread limit not met");
+    exit(EXIT_FAILURE);
 }
 
 #endif
