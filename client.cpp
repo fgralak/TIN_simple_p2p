@@ -729,8 +729,7 @@ void* downloadThread(void* arg)
     std::string trackerResponse = (static_cast <std::string> (nArg->stringData));
     // printf("%s\n", trackerResponse.c_str());
 
-    //TODO this lock blocked the thread, even though it was the only one
-    //pthread_mutex_lock(&(*nArg).mutex);
+    pthread_mutex_lock(&(*nArg).mutex);
 
     // Parse the tracker response
     BencodeParser bencodeParser(trackerResponse);
