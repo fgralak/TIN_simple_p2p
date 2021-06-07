@@ -414,7 +414,7 @@ string connectWithTracker(string torrentfile, string msg)
 
 string getListFromTracker()
 {
-    int sockFD = createConnection(TRACKER_IP.c_str(), stoi(trackerPort));
+    int sockFD = createConnection(trackerIP.c_str(), stoi(trackerPort));
 
     string trackerRequest = to_string(ServerNodeCode::NodeFileListRequest) + "$";
 
@@ -839,7 +839,7 @@ void* acceptTask(void* arg)
 
 string switchConnectionToTracker(bool connect)
 {
-    int sockFD = createConnection(TRACKER_IP.c_str(), stoi(trackerPort));
+    int sockFD = createConnection(trackerIP.c_str(), stoi(trackerPort));
     string trackerRequest;
     if(connect)
     {
