@@ -67,6 +67,8 @@ int createConnection(string serverIp, int serverPort);
 // Connect to tracker if connect==true; Disconnect from tracker otherwise
 string switchConnectionToTracker(bool connect);
 
+void printHelp();
+
 int main(int argc, char* argv[])
 {
     srand(time(NULL));
@@ -151,7 +153,10 @@ int main(int argc, char* argv[])
 
     switchConnectionToTracker(true);
 
-    while (true)
+    printf("waiting for input: \n");
+
+    bool quit = false;
+    while (!quit)
     {
         //check accepter
         int gotSocket = 0;
@@ -275,9 +280,23 @@ int main(int argc, char* argv[])
                 string trackerResponse = getListFromTracker();
                 printf("%s\n", trackerResponse.c_str());
             }
+            else if (action == "help")
+            {
+                printHelp();
+            }
+            else if (action == "quit")
+            {
+                string trackerResponse = switchConnectionToTracker(false);
+                printf("%s\n", trackerResponse.c_str());
+                quit = true;
+            }
             else
             {
                 printf("Unknown command!\n");
+            }
+            if(!quit)
+            {
+                printf("waiting for input: \n");
             }
         }
 
@@ -304,6 +323,29 @@ int main(int argc, char* argv[])
         pthread_mutex_destroy(&uploader.mutex);
     }
     return 0;
+}
+
+void printHelp()
+{
+    printf("Commands:\n");
+    printf("\tgenerate <filename>\n");
+    printf("\t\tGenerates a torrent file for the specified file\n");
+    printf("\tshare <filename.torrent>\n");
+    printf("\t\tShares info about a file based on its given corresponding torrent file\n");
+    printf("\tlist\n");
+    printf("\t\tLists file tracked by tracker and saves their torrent files locally\n");
+    printf("\tget <filename.torrent>\n");
+    printf("\t\tDownloads file specified by the torrent file\n");
+    printf("\tremove <filename.torrent>\n");
+    printf("\t\tRemoves information that you have the file specified by the torrent file or removes this file from the network if you are the owner\n");
+    printf("\tconnect\n");
+    printf("\t\tConnects your client to tracker\n");
+    printf("\tdisconnect\n");
+    printf("\t\tDisconnects your client from tracker which prevents other clients from downloading files from you\n");
+    printf("\thelp\n");
+    printf("\t\tPrints this help\n");
+    printf("\tquit\n");
+    printf("\t\tQuits the client\n");
 }
 
 void createTorrentFile(string name)
@@ -772,7 +814,6 @@ void* downloadThread(void* arg)
 void* ioTask(void* arg)
 {
     params_t *nArg = &(*(params_t*) (arg));
-    printf("waiting for input: \n");
     pthread_mutex_lock(&(*nArg).mutex);
 
     string args;
