@@ -75,6 +75,7 @@ void sendFileList(string &msg, params_t &arg);
 
 int main(int argc, char* argv[])
 {
+    bool isConnected = true;
     srand(time(NULL));
     // Check if arguments are valid
     if(argc < 3)
@@ -231,35 +232,46 @@ int main(int argc, char* argv[])
             }
             else if (action == "get")
             {
-                if (argument.size() < 2)
+                if (isConnected == true)
                 {
-                    printf("Invalid argument : <filename.torrent>\n");
-                }
-                else
-                {
-                    string trackerResponse = connectWithTracker(argument[1],
-                                                                to_string(ServerNodeCode::NodeOwnerListRequest));
-                    if (trackerResponse == "empty")
+                    if (argument.size() < 2)
                     {
-                        printf("file is not present in the network");
-
+                        printf("Invalid argument : <filename.torrent>\n");
                     }
                     else
                     {
-                        unsigned int threadId = getFirstFreeThread(
-                            downloadThreadID, downloadingParams);
-                        downloadingParams[threadId].stringData = 
-                            trackerResponse;
-                        downloadingParams[threadId].stringData1 = 
-                            argument[1];
-                        downloadingParams[threadId].threadId = 
-                            threadId;
-                        pthread_create(&downloadThreadID[threadId], 
-                            NULL, downloadManagerThread, 
-                            (void*) &downloadingParams[threadId]);
-                        pthread_detach(downloadThreadID[threadId]);
-                        currDownloaderCount++;
+                        string trackerResponse = connectWithTracker(
+                                argument[1],
+                                to_string(
+                                        ServerNodeCode::NodeOwnerListRequest));
+                        if (trackerResponse == "empty")
+                        {
+                            printf("file is not present in the network");
+
+                        }
+                        else
+                        {
+                            unsigned int threadId = getFirstFreeThread(
+                                    downloadThreadID, downloadingParams);
+                            downloadingParams[threadId].stringData =
+                                    trackerResponse;
+                            downloadingParams[threadId].stringData1 =
+                                    argument[1];
+                            downloadingParams[threadId].threadId =
+                                                                   threadId;
+                            pthread_create(
+                                    &downloadThreadID[threadId],
+                                    NULL,
+                                    downloadManagerThread,
+                                    (void*) &downloadingParams[threadId]);
+                            pthread_detach(downloadThreadID[threadId]);
+                            currDownloaderCount++;
+                        }
                     }
+                }
+                else
+                {
+                    printf("node is disconnected\n");
                 }
             }
             else if (action == "remove")
@@ -277,11 +289,13 @@ int main(int argc, char* argv[])
             }
             else if (action == "connect")
             {
+                isConnected = true;
                 string trackerResponse = switchConnectionToTracker(true);
                 printf("%s\n", trackerResponse.c_str());
             }
             else if (action == "disconnect")
             {
+                isConnected = false;
                 string trackerResponse = switchConnectionToTracker(false);
                 printf("%s\n", trackerResponse.c_str());
             }

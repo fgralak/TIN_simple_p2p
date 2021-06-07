@@ -168,12 +168,24 @@ std::string getListOfFilesInDir(std::string dirPath)
 {
     std::string ext(".torrent");
     std::string ret = "";
+    if (dirPath == "")
+    {
+        dirPath = "./";
+    }
     for (auto &p : std::filesystem::directory_iterator(dirPath))
     {
         if (p.path().extension() == ext)
         {
             std::ifstream file;
-            std::string filepath = dirPath + "/" + std::string(p.path().filename());
+            std::string filepath;
+            if (dirPath != "./")
+            {
+                filepath = dirPath + "/" + std::string(p.path().filename());
+            }
+            else
+            {
+                filepath = std::string(p.path().filename());
+            }
             file.open(filepath, std::ios::in | std::ios::binary);
             std::streamsize filesize = file.gcount();
             std::stringstream buffer;
