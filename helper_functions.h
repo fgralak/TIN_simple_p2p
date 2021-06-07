@@ -159,6 +159,11 @@ unsigned int getFirstFreeThread(pthread_t* threadArray,
     exit(EXIT_FAILURE);
 }
 
+inline bool fileExists (const std::string& name) {
+    ifstream f(name.c_str());
+    return f.good();
+}
+
 std::string getListOfFilesInDir(std::string dirPath)
 {
     std::string ext(".torrent");
@@ -177,11 +182,13 @@ std::string getListOfFilesInDir(std::string dirPath)
             file.close();
             TorrentParser torrentParser(filepath);
 
-
-        ret += torrentParser.filename;
-        ret += "$";
-        ret += std::to_string(torrentParser.filesize);
-        ret += "$";
+            if(fileExists(dirPath+"/"+torrentParser.filename))
+            {
+                ret += torrentParser.filename;
+                ret += "$";
+                ret += std::to_string(torrentParser.filesize);
+                ret += "$";
+            }
         }
     }
     return ret;
