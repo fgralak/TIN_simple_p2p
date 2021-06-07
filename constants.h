@@ -14,3 +14,5 @@ const int DOWNLOAD_FAIL_LEVEL = 100000;
 const int BUFF_SIZE = (1 << 15);
 
 const char fileListNameSizeDelimiter = '/';
+
+static constexpr double REFRESH_TIME_S {30.0};

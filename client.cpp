@@ -67,7 +67,11 @@ int createConnection(string serverIp, int serverPort);
 // Connect to tracker if connect==true; Disconnect from tracker otherwise
 string switchConnectionToTracker(bool connect);
 
+
 void printHelp();
+// Get list of files possible to upload
+void sendFileList(string &msg, params_t &arg);
+
 
 int main(int argc, char* argv[])
 {
@@ -164,12 +168,20 @@ int main(int argc, char* argv[])
         {
             pthread_join(accepterThread, NULL);
 
-            if(accepterThreadParams.intData != listenSocket){
-
-                uploadingParams[currUploaderCount] = accepterThreadParams;
-                pthread_create(&uploadThreadID[currUploaderCount], NULL, uploadThread,
-                                       (void*) &uploadingParams[currUploaderCount]);
-                currUploaderCount++;
+            if(accepterThreadParams.intData != listenSocket)
+            {
+                if(accepterThreadParams.stringData.substr(0, 3) == "140")
+                {
+                    string listOfFiles = getListOfFilesInDir(resourceDirectory);
+                    sendFileList(listOfFiles, accepterThreadParams);
+                }
+                else
+                {
+                    uploadingParams[currUploaderCount] = accepterThreadParams;
+                    pthread_create(&uploadThreadID[currUploaderCount], NULL, uploadThread,
+                                           (void*) &uploadingParams[currUploaderCount]);
+                    currUploaderCount++;
+                }
             }
 
             gotSocket = accepterThreadParams.intData;
@@ -225,8 +237,6 @@ int main(int argc, char* argv[])
                 }
                 else
                 {
-
-                    //TODO gdy nie zostanie utworzony watek do pobierania trzeba podzielic rzeczy do pobrania po rowno
                     string trackerResponse = connectWithTracker(argument[1],
                                                                 to_string(ServerNodeCode::NodeOwnerListRequest));
                     if (trackerResponse == "empty")
@@ -845,7 +855,7 @@ void* acceptTask(void* arg)
 
     unsigned int chunkId = 0;
     int idToRead = 0;
-    // ugly workaround to build chunk id
+
     if(clientRequest[0] == 'i') {
         idToRead = 1;
         while(clientRequest[idToRead] != 'e') {
@@ -868,7 +878,11 @@ void* acceptTask(void* arg)
         printf("Connection closed from client side\n");
         closeSocket(clientSocket);
     }
+    char buff[32];
+    struct sockaddr_in *s = (struct sockaddr_in*) &clientAddr;
+    inet_ntop(AF_INET, &s->sin_addr, buff, 32);
 
+    nArg->stringData1 = string(buff);
     nArg->stringData = string(clientRequest).substr(idToRead);
     nArg->intData = clientSocket;
     nArg->chunkId = chunkId;
@@ -922,4 +936,55 @@ string switchConnectionToTracker(bool connect)
 
     closeSocket(sockFD);
     return trackerResponse;
+}
+
+
+
+void sendFileList(string &msg, params_t &arg)
+{
+    pthread_mutex_lock(&(arg).mutex);
+
+    // Tracker address
+    sockaddr_in peerAddr;
+    unsigned peerAddrLen = sizeof(peerAddr);
+    memset(&peerAddr, 0, peerAddrLen);
+    peerAddr.sin_family = AF_INET;
+    peerAddr.sin_addr.s_addr = inet_addr(trackerIP.c_str());
+    peerAddr.sin_port = htons(stoi(trackerPort));
+
+    // Create a socket and connect to the peer
+    int sockFD = createTCPSocket();
+    int connectRetVal = connect(sockFD, (sockaddr*) &peerAddr, peerAddrLen);
+    if (connectRetVal < 0)
+    {
+        perror("connect() to tracker(list)");
+        closeSocket(sockFD);
+        exit(EXIT_FAILURE);
+    }
+
+    string checkTask = arg.stringData.substr(0, 3);
+    if (checkTask != to_string(ServerNodeCode::ServerFileListRefreshRequest))
+    {
+        //do nothing
+    }
+    else
+    {
+        getsockname(sockFD, (struct sockaddr*) &peerAddr, &peerAddrLen);
+
+
+        string resp = to_string(ServerNodeCode::NodeFileListRefreshRequest)
+                + "$" +
+                string(inet_ntoa(peerAddr.sin_addr))
+                + "$" +  to_string(listenPort)
+                + "$" + msg;
+        int respLen = resp.size();
+        if (sendAll(sockFD, resp.c_str(), respLen) == -1)
+        {
+            perror("sendall() failed");
+        }
+
+    }
+
+    closeSocket(sockFD);
+    pthread_mutex_unlock(&(arg).mutex);
 }

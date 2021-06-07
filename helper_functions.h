@@ -8,9 +8,12 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <string.h>
+#include <fstream>
 #include <array>
 #include <string>
+#include <filesystem>
 #include "constants.h"
+#include "torrent_parser.h"
 
 
 struct params_t {
@@ -154,6 +157,34 @@ unsigned int getFirstFreeThread(pthread_t* threadArray,
     
     perror("Could not find a free thread even though thread limit not met");
     exit(EXIT_FAILURE);
+}
+
+std::string getListOfFilesInDir(std::string dirPath)
+{
+    std::string ext(".torrent");
+    std::string ret = "";
+    for (auto &p : std::filesystem::directory_iterator(dirPath))
+    {
+        if (p.path().extension() == ext)
+        {
+            std::ifstream file;
+            std::string filepath = dirPath + "/" + std::string(p.path().filename());
+            file.open(filepath, std::ios::in | std::ios::binary);
+            std::streamsize filesize = file.gcount();
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            file.seekg(0, std::ios_base::beg);
+            file.close();
+            TorrentParser torrentParser(filepath);
+
+
+        ret += torrentParser.filename;
+        ret += "$";
+        ret += std::to_string(torrentParser.filesize);
+        ret += "$";
+        }
+    }
+    return ret;
 }
 
 #endif

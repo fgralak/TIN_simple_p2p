@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <atomic>
 #include <map>
+#include <set>
 #include <vector>
 #include "helper_functions.h"
 #include "bencode_parser.h"
@@ -49,6 +50,9 @@ string getListOfFiles();
 // Get list of clients having this file
 ClientList getListOfClients(string);
 
+// Refresh list of possible uploads
+void refreshClientFiles();
+
 string disconnectClient(string ip, int port);
 
 string connectClient(string ip, int port);
@@ -86,6 +90,22 @@ int main(int argc, char* argv[])
     for(int i = 0; i < THREAD_COUNT; i++)
         pthread_create(&threadID[i], NULL, serverWorker, (void*)&listeningSocketFD);
 
+    static auto lastTime = chrono::steady_clock::now();
+    while(!terminateAllThreads)
+    {
+        if (std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - lastTime).count()
+            > REFRESH_TIME_S)
+        {
+            lastTime = std::chrono::steady_clock::now();
+            refreshClientFiles();
+        }
+        else
+        {
+            sleep(5);
+        }
+    }
+
     for(int i = 0; i < THREAD_COUNT; i++)
         pthread_join(threadID[i], NULL);
 
@@ -93,12 +113,12 @@ int main(int argc, char* argv[])
     return 0;
 }
 
-void* serverWorker(void* arg)
+void* serverWorker(void *arg)
 {
     printf("Server Thread %lu created\n", pthread_self());
-    int listeningSocketFD = *(static_cast <int*> (arg));
+    int listeningSocketFD = *(static_cast<int*>(arg));
 
-    while(!terminateAllThreads)
+    while (!terminateAllThreads)
     {
         sockaddr_in clientAddr;
         unsigned clientLen = sizeof(clientAddr);
@@ -107,14 +127,14 @@ void* serverWorker(void* arg)
         // Accept one client request
         int sockFD = accept(listeningSocketFD,
                             (sockaddr*) &clientAddr,
-                            (socklen_t*)&clientLen);
-        if(sockFD < 0)
+                            (socklen_t*) &clientLen);
+        if (sockFD < 0)
         {
             perror("Accept failed");
             closeSocket(listeningSocketFD);
             printf("Terminating thread %lu\n", pthread_self());
             terminateAllThreads = true;
-            pthread_exit(NULL);
+            pthread_exit (NULL);
         }
 
         char trackerRequest[BUFF_SIZE];
@@ -124,7 +144,7 @@ void* serverWorker(void* arg)
         int requestMsgLen = recv(sockFD, trackerRequest, BUFF_SIZE, 0);
 
         // Receive failed for some reason
-        if(requestMsgLen < 0)
+        if (requestMsgLen < 0)
         {
             perror("recv() failed");
             closeSocket(sockFD);
@@ -132,77 +152,103 @@ void* serverWorker(void* arg)
         }
 
         // Connection closed by client
-        if(requestMsgLen == 0)
+        if (requestMsgLen == 0)
         {
             printf("Connection closed from client side\n");
             closeSocket(sockFD);
             continue;
         }
 
-        vector<string> request = split(trackerRequest,'$');
-
-        BencodeParser bencodeParser(request[1]);
-
-        if(request[0] != to_string(ServerNodeCode::NodeFileListRequest))
+        vector < string > request = split(trackerRequest, '$');
+        if (request[0]
+            == to_string(ServerNodeCode::NodeFileListRefreshRequest))
         {
-	        bencodeParser.print_details();
-	    }
-
-        string trackerResponse = "";
-
-        if(request[0] == to_string(ServerNodeCode::NodeNewFileAdded))
-        {
-            trackerResponse = addToList(bencodeParser.filename, inet_ntoa(clientAddr.sin_addr), bencodeParser.port, bencodeParser.filesize);
-        }
-        else if(request[0] == to_string(ServerNodeCode::NodeOwnerListRequest))
-        {
-            ClientList clientList = getListOfClients(bencodeParser.filename);
-            for(auto client : clientList)
+            vector < string > files(request.begin() + 3, request.end());
+            for (unsigned int i=0; i<files.size()-1; i+=2)
             {
-                trackerResponse += "6:peerip";
-                trackerResponse += to_string(client.first.size()) + ":";
-                trackerResponse += client.first;
-                trackerResponse += "8:peerport";
-                trackerResponse += "i" + to_string(client.second) + "e$";
+
+                string ret = addToList(files[i],
+                                       request[1],
+                                       stoi(request[2]),
+                                       stoi(files[i+1]));
             }
-        }
-        else if(request[0] == to_string(ServerNodeCode::NodeFileDisclaim))
-        {
-            trackerResponse = removeFromList(bencodeParser.filename, inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
-        }
-        else if(request[0] == to_string(ServerNodeCode::NodeFileListRequest))
-        {
-        	trackerResponse = getListOfFiles();
-        }
-        else if(request[0] == to_string(ServerNodeCode::NodeFileDownloaded))
-        {
-            addToList(bencodeParser.filename, inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
-        }
-        else if(request[0] == to_string(ServerNodeCode::NodeDisconnect))
-        {
-            trackerResponse = disconnectClient(inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
-        }
-        else if(request[0] == to_string(ServerNodeCode::NodeConnect))
-        {
-            trackerResponse = connectClient(inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
-        }
 
-
-        if(trackerResponse == "")
-            trackerResponse = "empty";
-
-        int responseLen = trackerResponse.size();
-
-        if(sendAll(sockFD, trackerResponse.c_str(), responseLen) != 0)
-        {
-            perror("sendall() failed");
-            printf("Only sent %d bytes\n", responseLen);
         }
+        else
+        {
+            BencodeParser bencodeParser(request[1]);
 
-        // Serve client here
+            if (request[0] != to_string(ServerNodeCode::NodeFileListRequest))
+            {
+                bencodeParser.print_details();
+            }
+
+            string trackerResponse = "";
+
+            if (request[0] == to_string(ServerNodeCode::NodeNewFileAdded))
+            {
+                trackerResponse = addToList(bencodeParser.filename,
+                                            inet_ntoa(clientAddr.sin_addr),
+                                            bencodeParser.port,
+                                            bencodeParser.filesize);
+            }
+            else if (request[0]
+                    == to_string(ServerNodeCode::NodeOwnerListRequest))
+            {
+                ClientList clientList = getListOfClients(
+                        bencodeParser.filename);
+                for (auto client : clientList)
+                {
+                    trackerResponse += "6:peerip";
+                    trackerResponse += to_string(client.first.size()) + ":";
+                    trackerResponse += client.first;
+                    trackerResponse += "8:peerport";
+                    trackerResponse += "i" + to_string(client.second) + "e$";
+                }
+            }
+            else if (request[0] == to_string(ServerNodeCode::NodeFileDisclaim))
+            {
+                trackerResponse = removeFromList(bencodeParser.filename,
+                                                 inet_ntoa(clientAddr.sin_addr),
+                                                 bencodeParser.port);
+            }
+            else if (request[0]
+                    == to_string(ServerNodeCode::NodeFileListRequest))
+            {
+                trackerResponse = getListOfFiles();
+            }
+            else if (request[0]
+                    == to_string(ServerNodeCode::NodeFileDownloaded))
+            {
+                addToList(bencodeParser.filename,
+                          inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
+            }
+            else if (request[0] == to_string(ServerNodeCode::NodeDisconnect))
+            {
+                trackerResponse = disconnectClient(
+                        inet_ntoa(clientAddr.sin_addr), bencodeParser.port);
+            }
+            else if (request[0] == to_string(ServerNodeCode::NodeConnect))
+            {
+                trackerResponse = connectClient(inet_ntoa(clientAddr.sin_addr),
+                                                bencodeParser.port);
+            }
+
+            if (trackerResponse == "")
+                trackerResponse = "empty";
+
+            int responseLen = trackerResponse.size();
+
+            if (sendAll(sockFD, trackerResponse.c_str(), responseLen) != 0)
+            {
+                perror("sendall() failed");
+                printf("Only sent %d bytes\n", responseLen);
+            }
+
+            // Serve client here
+        }
         closeSocket(sockFD);
     }
-
     return NULL;
 }
 
@@ -373,3 +419,51 @@ bool isAnyClientConnected(ClientList &clients)
     }
     return false;
 }
+
+
+void refreshClientFiles()
+{
+    pthread_mutex_lock(&mappingMutex);
+    set <pair<string, int>> clientMap;
+
+
+
+    for (auto &file : mapping)
+    {
+        for (auto &client : file.second)
+        {
+            clientMap.insert(client);
+        }
+    }
+
+    for (auto& uniqueClient: clientMap)
+    {
+        sockaddr_in peerAddr;
+        unsigned peerAddrLen = sizeof(peerAddr);
+        memset(&peerAddr, 0, peerAddrLen);
+        peerAddr.sin_family = AF_INET;
+        peerAddr.sin_addr.s_addr = inet_addr(uniqueClient.first.c_str());
+        peerAddr.sin_port = htons(uniqueClient.second);
+
+        int sockFD = createTCPSocket();
+        int connectRetVal = connect(sockFD, (sockaddr*) &peerAddr, peerAddrLen);
+        if(connectRetVal < 0)
+        {
+            perror("connect() to peer");
+            closeSocket(sockFD);
+            exit(EXIT_FAILURE);
+        }
+
+        string str = to_string(ServerNodeCode::ServerFileListRefreshRequest);
+        auto strC = str.c_str();
+        int len = str.length();
+        if(sendAll(sockFD, strC, len) != 0)
+        {
+            perror("send in list refresh request failed");
+        }
+        closeSocket(sockFD);
+    }
+    mapping.clear();
+    pthread_mutex_unlock(&mappingMutex);
+}
+
